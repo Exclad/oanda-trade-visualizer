@@ -126,7 +126,7 @@ def calculate_statistics(df):
     Calculates key performance statistics from the DataFrame.
     """
     stats = {}
-    
+
     # Basic Counts & P/L
     stats['total_pl'] = df['Profit/Loss'].sum()
     wins_df = df[df['Profit/Loss'] > 0]
@@ -134,7 +134,7 @@ def calculate_statistics(df):
     stats['win_count'] = len(wins_df)
     stats['loss_count'] = len(losses_df)
     stats['total_trades'] = stats['win_count'] + stats['loss_count']
-    
+
     # Win Rate
     if stats['total_trades'] > 0:
         stats['win_rate'] = (stats['win_count'] / stats['total_trades']) * 100
@@ -144,30 +144,20 @@ def calculate_statistics(df):
     # Averages
     stats['avg_win'] = wins_df['Profit/Loss'].mean() if stats['win_count'] > 0 else 0
     stats['avg_loss'] = losses_df['Profit/Loss'].mean() if stats['loss_count'] > 0 else 0
-        
+
     # Most Traded
     stats['most_traded'] = df['Instrument'].mode()[0] if not df.empty else "N/A"
-        
-    # --- NEW STATS ---
+
+    # Profit Factor & Win/Loss Ratio
     gross_profit = wins_df['Profit/Loss'].sum()
-    gross_loss = abs(losses_df['Profit/Loss'].sum()) # Use absolute value for loss
+    gross_loss = abs(losses_df['Profit/Loss'].sum())
+    stats['profit_factor'] = (gross_profit / gross_loss) if gross_loss > 0 else (float('inf') if gross_profit > 0 else 0)
+    stats['win_loss_ratio'] = (stats['win_count'] / stats['loss_count']) if stats['loss_count'] > 0 else (float('inf') if stats['win_count'] > 0 else 0)
 
-    # Profit Factor
-    if gross_loss > 0:
-        stats['profit_factor'] = gross_profit / gross_loss
-    elif gross_profit > 0:
-        stats['profit_factor'] = float('inf') # Indicate infinite profit factor if no losses
-    else:
-        stats['profit_factor'] = 0 # No profits or losses
-
-    # Win/Loss Ratio
-    if stats['loss_count'] > 0:
-        stats['win_loss_ratio'] = stats['win_count'] / stats['loss_count']
-    elif stats['win_count'] > 0:
-        stats['win_loss_ratio'] = float('inf') # Indicate infinite ratio if no losses
-    else:
-        stats['win_loss_ratio'] = 0 # No wins or losses
-    # --- END NEW STATS ---
+    # --- NEW: Largest Win/Loss ---
+    stats['largest_win'] = wins_df['Profit/Loss'].max() if stats['win_count'] > 0 else 0
+    stats['largest_loss'] = losses_df['Profit/Loss'].min() if stats['loss_count'] > 0 else 0
+    # --- END NEW ---
 
     return stats
 
@@ -184,10 +174,13 @@ def main():
     # --- 1. REFRESH LOGIC ---
     if "refresh_key" not in st.session_state:
         st.session_state.refresh_key = datetime.now()
+    if "selected_instruments" not in st.session_state:
+        st.session_state.selected_instruments = []
 
     st.sidebar.header("Data Control")
     if st.sidebar.button("Refresh Live Data"):
         st.session_state.refresh_key = datetime.now()
+        st.session_state.selected_instruments = []
         st.rerun()
 
     refresh_key = st.session_state.refresh_key
@@ -223,29 +216,21 @@ def main():
             # --- 5. SIDEBAR FILTERS ---
             st.sidebar.header("Filters")
 
-            # Date Filter
             min_date = trade_df['Date'].min().date()
             max_date = datetime.now().date()
-            start_date = st.sidebar.date_input(
-                "Select Start Date",
-                value=min_date,
-                min_value=min_date,
-                max_value=max_date
-            )
+            start_date = st.sidebar.date_input("Select Start Date", value=min_date, min_value=min_date, max_value=max_date)
             start_datetime_utc = pd.to_datetime(start_date).tz_localize('UTC')
 
-            # Instrument Filter
             all_instruments = sorted(trade_df['Instrument'].unique())
-            selected_instruments = st.sidebar.multiselect(
-                "Select Instruments (optional)",
-                options=all_instruments,
-                default=[]
-            )
+            current_selection = st.sidebar.multiselect("Select Instruments (optional)", options=all_instruments, default=st.session_state.selected_instruments)
+            if current_selection != st.session_state.selected_instruments:
+                 st.session_state.selected_instruments = current_selection
+                 st.rerun()
 
             # --- 6. APPLY FILTERS ---
             df_filtered = trade_df[trade_df['Date'] >= start_datetime_utc]
-            if selected_instruments:
-                 df_filtered = df_filtered[df_filtered['Instrument'].isin(selected_instruments)].copy()
+            if st.session_state.selected_instruments:
+                 df_filtered = df_filtered[df_filtered['Instrument'].isin(st.session_state.selected_instruments)].copy()
             else:
                  df_filtered = df_filtered.copy()
 
@@ -261,83 +246,84 @@ def main():
                 count_by_instrument = df_filtered['Instrument'].value_counts().reset_index()
                 count_by_instrument.columns = ['Instrument', 'Count']
 
+                # --- NEW: Day of Week Analysis ---
+                df_filtered['DayOfWeek'] = df_filtered['Date'].dt.day_name()
+                # Ensure correct order of days
+                day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                pl_by_day = df_filtered.groupby('DayOfWeek')['Profit/Loss'].sum().reindex(day_order).reset_index()
+                # --- END NEW ---
+
                 # --- 9. Display Primary Statistics ---
                 is_filtered = False
                 if start_date != min_date: is_filtered = True
-                if selected_instruments: is_filtered = True
+                if st.session_state.selected_instruments: is_filtered = True
                 stats_title = "Overall Statistics (Filtered)" if is_filtered else "Overall Statistics"
                 st.header(stats_title)
 
-                cols = st.columns(6)
-                cols[0].metric("Total Realized P/L (SGD)", f"${stats['total_pl']:,.2f}")
-                cols[1].metric("Total Closed Trades", stats['total_trades'])
-                cols[2].metric("Win Rate", f"{stats['win_rate']:.2f}%")
-                cols[3].metric("Avg Win / Avg Loss", f"${stats['avg_win']:,.2f} / ${stats['avg_loss']:,.2f}")
-                cols[4].metric("Profit Factor", f"{stats['profit_factor']:.2f}")
-                cols[5].metric("Win/Loss Ratio", f"{stats['win_loss_ratio']:.2f}")
+                # Split stats into two rows for better layout
+                cols_row1 = st.columns(4)
+                cols_row1[0].metric("Total Realized P/L (SGD)", f"${stats['total_pl']:,.2f}")
+                cols_row1[1].metric("Total Closed Trades", stats['total_trades'])
+                cols_row1[2].metric("Win Rate", f"{stats['win_rate']:.2f}%")
+                cols_row1[3].metric("Avg Win / Avg Loss", f"${stats['avg_win']:,.2f} / ${stats['avg_loss']:,.2f}")
+
+                cols_row2 = st.columns(4)
+                cols_row2[0].metric("Profit Factor", f"{stats['profit_factor']:.2f}")
+                cols_row2[1].metric("Win/Loss Ratio", f"{stats['win_loss_ratio']:.2f}")
+                cols_row2[2].metric("Largest Win (SGD)", f"${stats['largest_win']:,.2f}") # <-- NEW
+                cols_row2[3].metric("Largest Loss (SGD)", f"${stats['largest_loss']:,.2f}") # <-- NEW
 
                 # --- 10. Charts Section ---
                 st.header("Visualizations")
+                st.markdown("---") # Add a horizontal line for separation
 
                 # Row 1: Cumulative P/L
-                fig_line = px.line(
-                    df_filtered_sorted, x='Date', y='Cumulative P/L',
-                    title="Cumulative P/L Trend", labels={'Cumulative P/L': 'Cumulative P/L (SGD)'}
-                )
+                st.subheader("Cumulative P/L Trend")
+                fig_line = px.line(df_filtered_sorted, x='Date', y='Cumulative P/L', labels={'Cumulative P/L': 'Cumulative P/L (SGD)'})
                 fig_line.update_layout(hovermode="x unified")
                 st.plotly_chart(fig_line, use_container_width=True)
 
+                st.markdown("---") # Add a horizontal line
+
                 # Row 2: Performance Breakdown (Pie) + P/L Distribution (Histogram)
+                st.subheader("Performance Distribution")
                 col1, col2 = st.columns(2)
                 with col1:
-                    # --- FIX: Changed Wins vs Losses to Pie Chart ---
-                    pie_data = pd.DataFrame({
-                        'Metric': ['Wins', 'Losses'],
-                        'Count': [stats['win_count'], stats['loss_count']]
-                    })
-                    fig_pie = px.pie(
-                        pie_data,
-                        values='Count',
-                        names='Metric',
-                        title="Win/Loss Distribution",
-                        color='Metric', # Assigns color based on 'Metric' column
-                        color_discrete_map={'Wins': 'green', 'Losses': 'red'} # Specify colors
-                    )
-                    # Optional: Add text info inside slices
+                    pie_data = pd.DataFrame({'Metric': ['Wins', 'Losses'], 'Count': [stats['win_count'], stats['loss_count']]})
+                    fig_pie = px.pie(pie_data, values='Count', names='Metric', title="Win/Loss Distribution", color='Metric', color_discrete_map={'Wins': 'green', 'Losses': 'red'})
                     fig_pie.update_traces(textinfo='percent+label+value')
                     st.plotly_chart(fig_pie, use_container_width=True)
-                    # --- END PIE CHART FIX ---
                 with col2:
-                    # --- FIX: Enhanced Histogram ---
-                    fig_hist = px.histogram(
-                        df_filtered,
-                        x="Profit/Loss",
-                        nbins=30,
-                        title="Distribution of Trade P/L",
-                        text_auto=True # Add count text on top of bars
-                    )
-                    # Add black outlines to bars
+                    fig_hist = px.histogram(df_filtered, x="Profit/Loss", nbins=30, title="Distribution of Trade P/L", text_auto=True)
                     fig_hist.update_traces(marker_line_color='black', marker_line_width=1)
                     st.plotly_chart(fig_hist, use_container_width=True)
-                    # --- END HISTOGRAM FIX ---
 
-                # Row 3: Instrument Analysis (No changes here)
+                st.markdown("---") # Add a horizontal line
+
+                # Row 3: Instrument Analysis
+                st.subheader("Instrument Analysis")
                 col1, col2 = st.columns(2)
                 with col1:
-                     fig_inst_pl = px.bar(
-                         pl_by_instrument.sort_values('Profit/Loss', ascending=False),
-                         x='Instrument', y='Profit/Loss', color='Profit/Loss',
-                         color_continuous_scale=px.colors.diverging.RdYlGn,
-                         title="Total P/L by Instrument"
-                     )
+                     fig_inst_pl = px.bar(pl_by_instrument.sort_values('Profit/Loss', ascending=False), x='Instrument', y='Profit/Loss', color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, title="Total P/L by Instrument")
                      st.plotly_chart(fig_inst_pl, use_container_width=True)
                 with col2:
-                     fig_inst_count = px.bar(
-                         count_by_instrument.sort_values('Count', ascending=False),
-                         x='Instrument', y='Count',
-                         title="Trade Count by Instrument"
-                     )
+                     fig_inst_count = px.bar(count_by_instrument.sort_values('Count', ascending=False), x='Instrument', y='Count', title="Trade Count by Instrument")
                      st.plotly_chart(fig_inst_count, use_container_width=True)
+
+                st.markdown("---") # Add a horizontal line
+
+                # --- NEW: Row 4: Day of Week Analysis ---
+                st.subheader("Performance by Day of Week")
+                fig_day_pl = px.bar(
+                    pl_by_day,
+                    x='Day',
+                    y='Profit/Loss',
+                    title="Total P/L by Day of Week",
+                    color='Profit/Loss',
+                    color_continuous_scale=px.colors.diverging.RdYlGn # Same color scale
+                )
+                st.plotly_chart(fig_day_pl, use_container_width=True)
+                # --- END NEW ---
 
                 # --- 11. Filtered Trade History ---
                 st.header("Filtered Trade History")
