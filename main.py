@@ -239,16 +239,15 @@ def main():
             selected_instruments = st.sidebar.multiselect(
                 "Select Instruments (optional)",
                 options=all_instruments,
-                default=all_instruments # Default to all selected
+                default=[]
             )
 
             # --- 6. APPLY FILTERS ---
             df_filtered = trade_df[trade_df['Date'] >= start_datetime_utc]
-            if selected_instruments: # Only filter if instruments are selected
+            if selected_instruments:
                  df_filtered = df_filtered[df_filtered['Instrument'].isin(selected_instruments)].copy()
-            else: # If nothing selected, show warning but continue with date-filtered data
-                 st.sidebar.warning("No instruments selected. Showing data for all instruments in date range.")
-                 df_filtered = df_filtered.copy() # Ensure it's a copy
+            else:
+                 df_filtered = df_filtered.copy()
 
             # --- 7. Check if Filtered Data Exists ---
             if df_filtered.empty:
@@ -256,28 +255,26 @@ def main():
             else:
                 # --- 8. Calculate Stats & Prepare Chart Data ---
                 stats = calculate_statistics(df_filtered)
-
-                # Cumulative P/L Data
                 df_filtered_sorted = df_filtered.sort_values(by='Date', ascending=True)
                 df_filtered_sorted['Cumulative P/L'] = df_filtered_sorted['Profit/Loss'].cumsum()
-
-                # Instrument P/L Data
                 pl_by_instrument = df_filtered.groupby('Instrument')['Profit/Loss'].sum().reset_index()
-
-                # Instrument Count Data
                 count_by_instrument = df_filtered['Instrument'].value_counts().reset_index()
-                count_by_instrument.columns = ['Instrument', 'Count'] # Rename columns
+                count_by_instrument.columns = ['Instrument', 'Count']
 
                 # --- 9. Display Primary Statistics ---
-                st.header("Overall Statistics (Filtered)")
-                cols = st.columns(6) # Now 6 columns for stats
+                is_filtered = False
+                if start_date != min_date: is_filtered = True
+                if selected_instruments: is_filtered = True
+                stats_title = "Overall Statistics (Filtered)" if is_filtered else "Overall Statistics"
+                st.header(stats_title)
+
+                cols = st.columns(6)
                 cols[0].metric("Total Realized P/L (SGD)", f"${stats['total_pl']:,.2f}")
                 cols[1].metric("Total Closed Trades", stats['total_trades'])
                 cols[2].metric("Win Rate", f"{stats['win_rate']:.2f}%")
                 cols[3].metric("Avg Win / Avg Loss", f"${stats['avg_win']:,.2f} / ${stats['avg_loss']:,.2f}")
                 cols[4].metric("Profit Factor", f"{stats['profit_factor']:.2f}")
                 cols[5].metric("Win/Loss Ratio", f"{stats['win_loss_ratio']:.2f}")
-
 
                 # --- 10. Charts Section ---
                 st.header("Visualizations")
@@ -290,47 +287,57 @@ def main():
                 fig_line.update_layout(hovermode="x unified")
                 st.plotly_chart(fig_line, use_container_width=True)
 
-                # Row 2: Performance Breakdown + P/L Distribution
+                # Row 2: Performance Breakdown (Pie) + P/L Distribution (Histogram)
                 col1, col2 = st.columns(2)
                 with col1:
-                    # Wins vs Losses Bar Chart
-                    bar_data = pd.DataFrame({'Metric': ['Wins', 'Losses'], 'Count': [stats['win_count'], stats['loss_count']]})
-                    fig_bar = px.bar(
-                        bar_data, x='Metric', y='Count', color='Metric',
-                        color_discrete_map={'Wins': 'green', 'Losses': 'red'},
-                        title="Wins vs. Losses"
+                    # --- FIX: Changed Wins vs Losses to Pie Chart ---
+                    pie_data = pd.DataFrame({
+                        'Metric': ['Wins', 'Losses'],
+                        'Count': [stats['win_count'], stats['loss_count']]
+                    })
+                    fig_pie = px.pie(
+                        pie_data,
+                        values='Count',
+                        names='Metric',
+                        title="Win/Loss Distribution",
+                        color='Metric', # Assigns color based on 'Metric' column
+                        color_discrete_map={'Wins': 'green', 'Losses': 'red'} # Specify colors
                     )
-                    fig_bar.update_layout(showlegend=False)
-                    st.plotly_chart(fig_bar, use_container_width=True)
+                    # Optional: Add text info inside slices
+                    fig_pie.update_traces(textinfo='percent+label+value')
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                    # --- END PIE CHART FIX ---
                 with col2:
-                    # P/L Distribution Histogram
+                    # --- FIX: Enhanced Histogram ---
                     fig_hist = px.histogram(
-                        df_filtered, x="Profit/Loss", nbins=30, # Adjust nbins as needed
-                        title="Distribution of Trade P/L"
+                        df_filtered,
+                        x="Profit/Loss",
+                        nbins=30,
+                        title="Distribution of Trade P/L",
+                        text_auto=True # Add count text on top of bars
                     )
+                    # Add black outlines to bars
+                    fig_hist.update_traces(marker_line_color='black', marker_line_width=1)
                     st.plotly_chart(fig_hist, use_container_width=True)
+                    # --- END HISTOGRAM FIX ---
 
-                # Row 3: Instrument Analysis
+                # Row 3: Instrument Analysis (No changes here)
                 col1, col2 = st.columns(2)
                 with col1:
-                     # P/L by Instrument Bar Chart
                      fig_inst_pl = px.bar(
-                         pl_by_instrument.sort_values('Profit/Loss', ascending=False), # Sort for clarity
-                         x='Instrument', y='Profit/Loss',
-                         color='Profit/Loss', # Color bars based on P/L value
-                         color_continuous_scale=px.colors.diverging.RdYlGn, # Red-Yellow-Green scale
+                         pl_by_instrument.sort_values('Profit/Loss', ascending=False),
+                         x='Instrument', y='Profit/Loss', color='Profit/Loss',
+                         color_continuous_scale=px.colors.diverging.RdYlGn,
                          title="Total P/L by Instrument"
                      )
                      st.plotly_chart(fig_inst_pl, use_container_width=True)
                 with col2:
-                     # Trade Count by Instrument Bar Chart
                      fig_inst_count = px.bar(
-                         count_by_instrument.sort_values('Count', ascending=False), # Sort for clarity
+                         count_by_instrument.sort_values('Count', ascending=False),
                          x='Instrument', y='Count',
                          title="Trade Count by Instrument"
                      )
                      st.plotly_chart(fig_inst_count, use_container_width=True)
-
 
                 # --- 11. Filtered Trade History ---
                 st.header("Filtered Trade History")
@@ -344,7 +351,7 @@ def main():
         st.info("Please copy 'config.ini.template' to 'config.ini' and fill in your Oanda credentials.")
     except Exception as e:
         st.error(f"An unexpected error occurred: {e}")
-        st.exception(e) # Show details
+        st.exception(e)
 
 if __name__ == "__main__":
     main()
