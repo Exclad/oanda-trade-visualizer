@@ -1,0 +1,15 @@
+# Python cache files
+__pycache__/
+*.pyc
+
+# Virtual environment folder
+.venv/
+venv/
+env/
+
+# Configuration file with secret API keys
+config.ini
+
+# IDE files
+.vscode/
+.idea/

@@ -1,0 +1,9 @@
+[OANDA]
+# Replace with your Oanda v20 account ID (e.g., xxx-xxx-xxxxxxx-xxx)
+ACCOUNT_ID = YOUR_ACCOUNT_ID
+
+# Replace with your Oanda v20 API token
+ACCESS_TOKEN = YOUR_ACCESS_TOKEN
+
+# 'practice' for demo/practice accounts, 'live' for real money
+ENVIRONMENT = practice
