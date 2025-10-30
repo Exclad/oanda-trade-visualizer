@@ -1,0 +1,3 @@
+@echo off
+echo Starting Oanda Trading Dashboard...
+streamlit run main.py
