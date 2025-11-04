@@ -242,7 +242,11 @@ def fetch_ff_events():
             impact = impact_map.get(impact_str, "N/A")
 
             # --- 4. Get Currency ---
-            currency_code = row.get('currency', 'N/A').upper()
+            currency_val = row.get('currency')
+            if currency_val is None:
+                currency_code = "N/A"
+            else:
+                currency_code = currency_val.upper()
 
             # Add the processed event to our list
             event_list.append({
@@ -469,7 +473,7 @@ def main():
         col2.metric("Unrealized P/L (SGD)", f"${account_pl:,.2f}")
         col3.metric("Margin Available (SGD)", f"${margin_avail:,.2f}")
 
-        # --- Economic Events Section ---
+        # --- [MODIFIED] Economic Events Section ---
         st.markdown("---") 
         st.header("Today's Economic Events 📰") 
 
@@ -479,17 +483,16 @@ def main():
             # Default to 'Asia/Singapore', find its index
             default_ix = all_timezones.index('Asia/Singapore')
         except ValueError:
-            default_ix = 0 # Fallback if 'Asia/Singapore' isn't found
+            default_ix = 0 # Fallback
             
         st.markdown("Select your timezone:")
-        # Create the dropdown, its value is stored in 'user_timezone'
         user_timezone = st.selectbox(
             label="Select your timezone:",
             options=all_timezones,
             index=default_ix,
-            label_visibility="collapsed" # Hides the label "Select your timezone:"
+            label_visibility="collapsed"
         )
-
+        
         # Helper for impact emojis
         def map_impact_to_emoji(impact):
             if impact == "High": return "🔴 High"
@@ -497,49 +500,77 @@ def main():
             if impact == "Low": return "🟡 Low"
             return "⚪️ N/A"
 
-        # --- 2. Styling function for 'Passed' events ---
+        # Styling function for 'Passed' events
         def style_passed_events(row):
             """Applies CSS to de-emphasize 'Passed' events."""
-            # Apply to all columns in the row
             if row.Status == 'Passed':
-                # CSS for grey text with a strikethrough
                 return ['color: #888888; text-decoration: line-through;'] * len(row)
-            # Default (no style)
             else:
                 return [''] * len(row)
-        # --- End of helper function ---
 
         # Fetch the event data
         events_df = fetch_ff_events()
 
         if events_df is not None and not events_df.empty:
+            
+            # --- 2. Create filter widgets (Toggle and new Currency Multiselect) ---
+            
+            # Get a sorted list of unique currencies from the data
+            all_currencies = sorted(events_df['Currency'].unique()) # <-- NEW
+            
+            # Create two columns for the filters
+            col1, col2 = st.columns(2) # <-- NEW
+            
+            with col1: # <-- NEW
+                # The toggle goes in the first column
+                show_only_upcoming = st.toggle("Show only upcoming events", value=True) # <-- MODIFIED
+            
+            with col2: # <-- NEW
+                # The new currency multiselect goes in the second column
+                selected_currencies = st.multiselect(
+                    "Filter by currency:",
+                    options=all_currencies,
+                    placeholder="Filter by currency (optional)",
+                    label_visibility="collapsed"
+                )
+
+            # --- 3. Process and Filter the DataFrame ---
             df_events_display = events_df.copy()
 
-            # --- 3. Convert Time to Selected Timezone ---
+            # Convert Time to Selected Timezone
             try:
-                # Convert the 'Time' (which is UTC) to the user's selected timezone
                 df_events_display['Time'] = df_events_display['Time'].dt.tz_convert(user_timezone)
             except Exception as e:
                 st.error(f"Could not convert event time to {user_timezone}: {e}")
                 
-            # Format time as a string (e.g., "01/11 (Sat) 14:00")
             df_events_display['Time'] = df_events_display['Time'].dt.strftime('%d/%m (%a) %H:%M')
-            # Apply emoji formatting to the 'Impact' column
             df_events_display['Impact'] = df_events_display['Impact'].apply(map_impact_to_emoji)
             
-            # Select and reorder columns for a clean display
+            # Select and reorder columns
             df_events_display = df_events_display[['Time', 'Status', 'Currency', 'Impact', 'Event']] 
             
-            # --- 4. Apply Styling and Display ---
-            # We apply the styling function and store it in a 'styler' object
-            styler = df_events_display.style.apply(style_passed_events, axis=1)
+            # --- 4. Apply Filters ---
+            
+            # Start with the full processed DataFrame
+            df_to_display = df_events_display # <-- MODIFIED
+            
+            # Apply toggle filter
+            if show_only_upcoming:
+                df_to_display = df_to_display[df_to_display['Status'] == 'Upcoming'].copy()
+            
+            # Apply currency filter (if any are selected)
+            if selected_currencies: # <-- NEW
+                df_to_display = df_to_display[df_to_display['Currency'].isin(selected_currencies)]
+            
+            # --- 5. Apply Styling and Display ---
+            styler = df_to_display.style.apply(style_passed_events, axis=1)
 
             # Pass the STYLER object to st.dataframe
             st.dataframe(styler, width='stretch', hide_index=True)
 
         else:
             st.info("No economic events found for today.")
-        # --- [END Economic Events Section] ---
+        # --- [END MODIFIED SECTION] ---
 
         # Fetch trade history (will use cache unless refresh_key or last_id changed)
         trade_df = fetch_trade_history(refresh_key, last_id)
