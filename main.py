@@ -157,6 +157,8 @@ def fetch_trade_history(refresh_key, last_transaction_id):
         print("\nNo completed trades with P/L found in this transaction range.")
         return None # Return None to indicate no data
 
+    # --- Convert List to DataFrame and Clean Data ---
+    
     # Convert the list of trade data into a pandas DataFrame
     df = pd.DataFrame(trade_data)
     # Convert the 'Date' column from string to timezone-aware datetime objects (UTC initially)
@@ -173,6 +175,7 @@ def fetch_trade_history(refresh_key, last_transaction_id):
     return df
 
 # Use caching with a Time-To-Live (TTL) of 900 seconds (15 minutes).
+# This means the app will only re-fetch events if the last fetch was > 15 mins ago.
 @st.cache_data(ttl=900)
 def fetch_ff_events():
     """
@@ -187,7 +190,7 @@ def fetch_ff_events():
     
     # --- Timezone Assumption ---
     # We assume 'investpy' returns times already localized to the machine's timezone.
-    # Source Timezone kept as Singapore
+    # Source Timezone kept as Singapore.
     try:
         source_timezone = pytz.timezone('Asia/Singapore')
     except pytz.UnknownTimeZoneError:
@@ -207,7 +210,9 @@ def fetch_ff_events():
             event_time_str = row['time']
             event_date_str = row['date']
             
-            # --- 1. Parse Time (Corrected Logic) ---
+            # --- 1. Parse Time ---
+            # This logic handles the inconsistent time formats from the library
+            
             if event_time_str.lower() == "all day":
                 event_time_str = "00:00"
 
@@ -242,7 +247,8 @@ def fetch_ff_events():
             impact = impact_map.get(impact_str, "N/A")
 
             # --- 4. Get Currency ---
-            currency_val = row.get('currency')
+            # Safely handle 'None' values for currency
+            currency_val = row.get('currency') # This might be 'USD' or it might be None
             if currency_val is None:
                 currency_code = "N/A"
             else:
@@ -473,7 +479,7 @@ def main():
         col2.metric("Unrealized P/L (SGD)", f"${account_pl:,.2f}")
         col3.metric("Margin Available (SGD)", f"${margin_avail:,.2f}")
 
-        # --- [MODIFIED] Economic Events Section ---
+        # --- Economic Events Section ---
         st.markdown("---") 
         st.header("Today's Economic Events 📰") 
 
@@ -483,14 +489,15 @@ def main():
             # Default to 'Asia/Singapore', find its index
             default_ix = all_timezones.index('Asia/Singapore')
         except ValueError:
-            default_ix = 0 # Fallback
+            default_ix = 0 # Fallback if 'Asia/Singapore' isn't found
             
         st.markdown("Select your timezone:")
+        # Create the dropdown, its value is stored in 'user_timezone'
         user_timezone = st.selectbox(
             label="Select your timezone:",
             options=all_timezones,
             index=default_ix,
-            label_visibility="collapsed"
+            label_visibility="collapsed" # Hides the label "Select your timezone:"
         )
         
         # Helper for impact emojis
@@ -504,73 +511,81 @@ def main():
         def style_passed_events(row):
             """Applies CSS to de-emphasize 'Passed' events."""
             if row.Status == 'Passed':
+                # CSS for grey text with a strikethrough
                 return ['color: #888888; text-decoration: line-through;'] * len(row)
             else:
+                # No style for 'Upcoming' rows
                 return [''] * len(row)
 
         # Fetch the event data
         events_df = fetch_ff_events()
 
+        # Only display the section if events were successfully fetched
         if events_df is not None and not events_df.empty:
             
-            # --- 2. Create filter widgets (Toggle and new Currency Multiselect) ---
+            # --- 2. Create filter widgets (Toggle and Currency Multiselect) ---
             
             # Get a sorted list of unique currencies from the data
-            all_currencies = sorted(events_df['Currency'].unique()) # <-- NEW
+            all_currencies = sorted(events_df['Currency'].unique())
             
-            # Create two columns for the filters
-            col1, col2 = st.columns(2) # <-- NEW
+            # Create two columns for the filters to sit side-by-side
+            col1, col2 = st.columns(2)
             
-            with col1: # <-- NEW
+            with col1:
                 # The toggle goes in the first column
-                show_only_upcoming = st.toggle("Show only upcoming events", value=True) # <-- MODIFIED
+                show_only_upcoming = st.toggle("Show only upcoming events", value=True)
             
-            with col2: # <-- NEW
+            with col2:
                 # The new currency multiselect goes in the second column
                 selected_currencies = st.multiselect(
                     "Filter by currency:",
                     options=all_currencies,
                     placeholder="Filter by currency (optional)",
-                    label_visibility="collapsed"
+                    label_visibility="collapsed" # Hides the label
                 )
 
             # --- 3. Process and Filter the DataFrame ---
+            # Create a copy to avoid changing the cached data
             df_events_display = events_df.copy()
 
             # Convert Time to Selected Timezone
             try:
+                # Convert the 'Time' (which is UTC) to the user's selected timezone
                 df_events_display['Time'] = df_events_display['Time'].dt.tz_convert(user_timezone)
             except Exception as e:
                 st.error(f"Could not convert event time to {user_timezone}: {e}")
                 
+            # Format time as a string (e.g., "01/11 (Sat) 14:00")
             df_events_display['Time'] = df_events_display['Time'].dt.strftime('%d/%m (%a) %H:%M')
+            # Apply emoji formatting to the 'Impact' column
             df_events_display['Impact'] = df_events_display['Impact'].apply(map_impact_to_emoji)
             
-            # Select and reorder columns
+            # Select and reorder columns for a clean display
             df_events_display = df_events_display[['Time', 'Status', 'Currency', 'Impact', 'Event']] 
             
             # --- 4. Apply Filters ---
             
             # Start with the full processed DataFrame
-            df_to_display = df_events_display # <-- MODIFIED
+            df_to_display = df_events_display
             
             # Apply toggle filter
             if show_only_upcoming:
                 df_to_display = df_to_display[df_to_display['Status'] == 'Upcoming'].copy()
             
             # Apply currency filter (if any are selected)
-            if selected_currencies: # <-- NEW
+            if selected_currencies:
                 df_to_display = df_to_display[df_to_display['Currency'].isin(selected_currencies)]
             
             # --- 5. Apply Styling and Display ---
+            # Apply the CSS styling function to the filtered DataFrame
             styler = df_to_display.style.apply(style_passed_events, axis=1)
 
-            # Pass the STYLER object to st.dataframe
+            # Pass the STYLER object to st.dataframe to render it
             st.dataframe(styler, width='stretch', hide_index=True)
 
         else:
             st.info("No economic events found for today.")
-        # --- [END MODIFIED SECTION] ---
+        # --- [END Economic Events Section] ---
 
         # Fetch trade history (will use cache unless refresh_key or last_id changed)
         trade_df = fetch_trade_history(refresh_key, last_id)
@@ -655,6 +670,7 @@ def main():
             #    (since the trade_df['Date'] column is already in UTC)
             start_datetime_utc = pd.to_datetime(st.session_state.filter_start_date).tz_localize('UTC')
             # Add 1 day to end date and use '<' to include all times on the selected end day.
+            # This ensures we get all trades on the selected end_date.
             end_datetime_utc = pd.to_datetime(st.session_state.filter_end_date + timedelta(days=1)).tz_localize('UTC')
 
             # 2. Filter the main DataFrame based on UTC dates
@@ -784,11 +800,17 @@ def main():
                 st.subheader("Instrument Analysis")
                 col1, col2 = st.columns(2) 
                 with col1:
-                      fig_inst_pl = px.bar(pl_by_instrument.sort_values('Profit/Loss', ascending=False), x='Instrument', y='Profit/Loss', color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, title="Total P/L by Instrument")
+                      # This bar chart shows total P/L, colored by profit (green) or loss (red)
+                      fig_inst_pl = px.bar(pl_by_instrument.sort_values('Profit/Loss', ascending=False), 
+                                           x='Instrument', y='Profit/Loss', color='Profit/Loss', 
+                                           color_continuous_scale=px.colors.diverging.RdYlGn, 
+                                           title="Total P/L by Instrument")
                       fig_inst_pl.update_traces(hovertemplate='Instrument: %{x}<br>Total P/L: $%{y:,.2f}')
                       st.plotly_chart(fig_inst_pl, use_container_width=True)
                 with col2:
-                      fig_inst_count = px.bar(count_by_instrument.sort_values('Count', ascending=False), x='Instrument', y='Count', title="Trade Count by Instrument")
+                      # This bar chart shows the simple count of trades per instrument
+                      fig_inst_count = px.bar(count_by_instrument.sort_values('Count', ascending=False), 
+                                              x='Instrument', y='Count', title="Trade Count by Instrument")
                       fig_inst_count.update_traces(hovertemplate='Instrument: %{x}<br>Count: %{y}')
                       st.plotly_chart(fig_inst_count, use_container_width=True)
                 st.markdown("---") # Separator
@@ -797,16 +819,24 @@ def main():
                 # --- Performance Over Time Section ---
                 st.subheader("Performance Over Time")
 
-                fig_yearly_pl = px.bar(pl_by_year, x='Year', y='Profit/Loss', title="Total P/L by Year", color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn)
+                # Yearly P/L Bar Chart
+                fig_yearly_pl = px.bar(pl_by_year, x='Year', y='Profit/Loss', title="Total P/L by Year", 
+                                       color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn)
                 fig_yearly_pl.update_traces(hovertemplate='Year: %{x}<br>Total P/L: $%{y:,.2f}')
                 st.plotly_chart(fig_yearly_pl, use_container_width=True)
 
-                fig_monthly_pl = px.bar(pl_by_month, x='YearMonth', y='Profit/Loss', title="Total P/L by Month", color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, labels={'YearMonth': 'Month'})
+                # Monthly P/L Bar Chart
+                fig_monthly_pl = px.bar(pl_by_month, x='YearMonth', y='Profit/Loss', title="Total P/L by Month", 
+                                        color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, 
+                                        labels={'YearMonth': 'Month'})
                 fig_monthly_pl.update_traces(hovertemplate='Month: %{x}<br>Total P/L: $%{y:,.2f}')
                 st.plotly_chart(fig_monthly_pl, use_container_width=True)
 
+                # Day of Week P/L Bar Chart
                 st.subheader("Performance by Day of Week", help="This chart shows the total Profit/Loss realized on each day of the week, based on the closing time of the trade in your local timezone (SGT).")
-                fig_day_pl = px.bar(pl_by_day, x='Day', y='Profit/Loss', title="Total P/L by Day", color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, labels={'Day': 'Day'})
+                fig_day_pl = px.bar(pl_by_day, x='Day', y='Profit/Loss', title="Total P/L by Day", 
+                                    color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, 
+                                    labels={'Day': 'Day'})
                 fig_day_pl.update_traces(hovertemplate='Day: %{x}<br>Total P/L: $%{y:,.2f}')
                 st.plotly_chart(fig_day_pl, use_container_width=True)
                 
@@ -816,18 +846,17 @@ def main():
                 # --- Filtered Trade History Table & Download ---
                 st.header("Filtered Trade History")
                 
-                # --- Columns to show in Filtered Trade History Table ---
+                # Define the exact columns we want to show in the final table
                 columns_to_show = [
                     "Date", "Day", "Instrument", "Buy/Sell", 
                     "Amount", "Profit/Loss", "Account Balance"
                 ]
-                # --- End of fix ---
                 
                 # Filter df_filtered to only these columns for display and CSV
                 # This ensures temporary columns (Year, YearMonth) are not shown
                 available_columns = [col for col in columns_to_show if col in df_filtered.columns]
                 
-                # Create a specific DataFrame for the CSV download (with raw datetimes)
+                # Create a specific DataFrame for the CSV download
                 # We use df_filtered (which has SGT datetimes) for the CSV
                 df_csv = df_filtered[available_columns].copy()
                 csv_string = df_csv.to_csv(index=False).encode('utf-8')
@@ -839,7 +868,6 @@ def main():
                 df_display['Date'] = df_display['Date'].dt.strftime('%d/%m/%Y %H:%M:%S %Z')
                 
                 # Display the DataFrame with formatting for P/L and Balance columns
-                # We removed the row-styling, as requested.
                 st.dataframe(df_display.style.format({"Profit/Loss": "{:.2f}", "Account Balance": "{:.2f}"}), width='stretch')
 
                 # Add the download button (using the df_csv data)
