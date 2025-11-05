@@ -19,11 +19,11 @@ This guide will walk you through setting up the dashboard from scratch.
         * `Use admin privileges when installing py.exe`
         * `Add python.exe to PATH`
     * Then click `Install Now`.
-    * ![Python Setup Screen](images\Python Setup Screen.png)
+    * ![Python Setup Screen](images/python-setup-screen.png)
 
 3.  **Finish Installation:**
     * When setup is successful, you can click `Close`.
-    * ![Python Setup Successful](images\Python Setup Successful.png)
+    * ![Python Setup Successful](images/python-setup-successful.png)
 
 4.  **Download the Code:**
     * Go to the [GitHub repository](https://github.com/Exclad/oanda-trade-visualizer).
@@ -72,10 +72,10 @@ This guide will walk you through setting up the dashboard from scratch.
 
 1.  **Installation:** The first time you run the script, a terminal window will open and automatically install all the necessary libraries. This may take a minute.
 2.  **Streamlit Welcome:** You'll see a message "Welcome to Streamlit!" asking for an email.
-    * ![Streamlit Welcome Prompt](images/Streamlit Welcome Prompt.png)
+    * ![Streamlit Welcome Prompt](images/streamlit-welcome-prompt.png)
     * You can leave this blank and just press **Enter**.
 3.  **Firewall Popup:** Your computer might show a firewall warning for "Python". This is just Streamlit creating a local web server. You can safely click **Cancel** or "Allow".
-    * ![Windows Firewall Prompt](images\Windows Firewall Prompt.png)
+    * ![Windows Firewall Prompt](images/windows-firewall-prompt.png)
 4.  **Enter Credentials:** The dashboard will open in your web browser. Fill in your Oanda Account ID and API Access Token.
     * Follow the link on the page to get your token.
     * **Note:** The API token for your Demo account is different from your Live account.
