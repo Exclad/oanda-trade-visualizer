@@ -7,23 +7,61 @@ from zoneinfo import ZoneInfo        # For more robust timezone handling (like '
 import requests                      # For making HTTP requests to Oanda
 import pandas as pd                  # For data manipulation and analysis (DataFrames)
 import plotly.express as px          # For creating interactive charts
+import plotly.io as pio              
 import streamlit as st               # For creating the web application interface
 import investpy                      # For fetching economic calendar data
 import pytz                          # For the list of all timezones
+import os                            # Provides functions to interact with the OS (e.g., os.path.exists)
+import time                          # Provides time-related functions (e.g., time.sleep)
+
+# --- Function to create the config file ---
+def create_config(account_id, access_token, environment):
+    """
+    Creates and saves the config.ini file with the user-provided credentials.
+    """
+    # Initialize a new config parser object in memory
+    config = configparser.ConfigParser()
+    # Create a new section named '[OANDA]'
+    config['OANDA'] = {
+        'ACCOUNT_ID': account_id,
+        'ACCESS_TOKEN': access_token,
+        'ENVIRONMENT': environment
+    }
+    # Open 'config.ini' in 'write' mode ('w'). This creates the file or overwrites it.
+    with open('config.ini', 'w') as configfile:
+        # Write the in-memory config (with the [OANDA] section) to the file
+        config.write(configfile)
 
 # --- Configuration Loading ---
 
 def get_config():
     """
     Reads API credentials and settings from the 'config.ini' file.
-    Raises an error if the file or the 'OANDA' section is missing.
+    Raises FileNotFoundError if the file or the 'OANDA' section is missing.
+    Raises ValueError if any required keys are missing.
     """
+    config_file = 'config.ini'
     config = configparser.ConfigParser()
-    config.read('config.ini') # Load the config file
+    
+    # Check 1: Does the file exist?
+    # Use the 'os' library to check the file path.
+    if not os.path.exists(config_file):
+        # If not, stop and "raise" an error. This error will be "caught"
+        # by the 'try...except' block in our main() function.
+        raise FileNotFoundError(f"Config file '{config_file}' not found.")
 
+    # If the file exists, read its contents into the config parser
+    config.read(config_file)
+
+    # Check 2: Does the 'OANDA' section exist?
     if 'OANDA' not in config:
-        # Error handling if config is invalid
-        raise ValueError("Config file 'config.ini' not found or 'OANDA' section is missing.")
+        # If the section is missing, we also raise an error to trigger the setup.
+        raise FileNotFoundError(f"Config file '{config_file}' is missing the '[OANDA]' section.")
+
+    # Check 3: Are all required keys present within the [OANDA] section?
+    if 'ACCOUNT_ID' not in config['OANDA'] or 'ACCESS_TOKEN' not in config['OANDA'] or 'ENVIRONMENT' not in config['OANDA']:
+         # If not, raise a ValueError, which will also be caught by our 'try...except' block.
+         raise ValueError(f"Config file '{config_file}' is missing a required key (ACCOUNT_ID, ACCESS_TOKEN, or ENVIRONMENT).")
 
     # Return the 'OANDA' section containing credentials
     return config['OANDA']
@@ -884,14 +922,88 @@ def main():
             st.warning("No completed trades with P/L found in your account history.")
 
     # --- Error Handling ---
-    except FileNotFoundError:
-        # Specific error if config.ini is missing
-        st.error("ERROR: 'config.ini' file not found.")
-        st.info("Please copy 'config.ini.template' to 'config.ini' and fill in your Oanda credentials.")
+    # This 'try' block attempts to run the main dashboard logic.
+    # If get_config() fails, it raises FileNotFoundError or ValueError.
+    # The 'except' block below will "catch" those specific errors.
+    except (FileNotFoundError, ValueError) as e:
+        # This code block only runs if the 'try' block fails with one of the specified errors.
+        
+        # Display the error that was raised (e.g., "Config file 'config.ini' not found.")
+        st.warning(f"Configuration Error: {e}")
+        # Show a friendly welcome message for the setup process
+        st.header("Welcome! Please set up your Oanda Credentials")
+        st.info("Your credentials will be saved locally to 'config.ini' for future use.")
+        
+        # Create a Streamlit Form. This groups all the inputs together.
+        # The code inside the 'if submitted:' block will only run when the button is pressed.
+        with st.form("config_form"):
+            st.write("Enter your Oanda v20 API details below:")
+            
+            # --- 1. ACCOUNT ID INPUT ---
+            # Use st.markdown for a bold, custom label
+            st.markdown("**Oanda Account ID**")
+            # Use st.write for standard-sized help text
+            st.write("This is your account number, e.g., `xxx-xxx-xxxxxxx-xxx`")
+            account_id = st.text_input(
+                "Oanda Account ID",            # Internal label (for accessibility)
+                label_visibility="collapsed",  # Hide the internal label
+                placeholder="xxx-xxx-xxxxxxx-xxx"
+            )
+
+            # --- 2. API TOKEN INPUT ---
+            # Use st.markdown for a bold, custom label
+            st.markdown("**Oanda API Access Token**")
+            # Provide a clickable link to help the user
+            st.markdown("You can generate your token here: [Oanda Personal Token Hub](https://hub.oanda.com/tpa/personal_token)")
+            access_token = st.text_input(
+                "Oanda API Access Token",      # Internal label (for accessibility)
+                type="password",               # Hides the input as the user types
+                label_visibility="collapsed",  # Hide the internal label
+                placeholder="Paste your API token here"
+            )
+
+            # --- 3. ENVIRONMENT SELECTION ---
+            # Use st.radio for a simple, non-breakable choice
+            env_choice = st.radio(
+                "Select Environment",
+                ("Demo (Practice)", "Live"),  # User-friendly labels
+                index=0,                      # Default to "Demo"
+                horizontal=True,              # Display buttons side-by-side
+                help="Select 'Demo' for your practice account or 'Live' for your real trading account."
+            )
+            
+            # The one and only button for the form
+            submitted = st.form_submit_button("Save and Run Dashboard")
+        
+        # This 'if' block is OUTSIDE the form, but tied to the 'submitted' variable.
+        # It runs only after the user clicks the "Save" button.
+        if submitted:
+            # Simple validation to make sure fields are not blank
+            if not account_id or not access_token:
+                st.error("Please fill in both Account ID and Access Token.")
+            else:
+                # Convert the user-friendly radio option ("Demo (Practice)")
+                # into the system value ("practice") that the API expects.
+                environment = 'practice' if env_choice == 'Demo (Practice)' else 'live'
+                
+                # Call our helper function to write the data to 'config.ini'
+                create_config(account_id, access_token, environment) 
+                
+                # Show a temporary success message
+                st.success("Configuration saved! Reloading dashboard...")
+                # Pause for 2 seconds so the user can read the message
+                time.sleep(2) 
+                # Rerun the entire script from the top.
+                # This time, get_config() will succeed, and the dashboard will load.
+                st.rerun() 
+    
+    # This is the final 'catch-all' exception handler
     except Exception as e:
-        # Catch-all for any other unexpected errors
+        # This catches any OTHER error that might happen during the dashboard's runtime
+        # (e.g., Oanda's API is down, a bad API key was saved, a bug in a chart).
         st.error(f"An unexpected error occurred: {e}")
-        st.exception(e) # Display the full error traceback in the app for debugging
+        # st.exception(e) prints the full error traceback for debugging.
+        st.exception(e)
 
 
 # --- Callback functions (Defined outside main() for clarity and scope) ---
