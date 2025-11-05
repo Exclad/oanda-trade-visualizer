@@ -9,6 +9,7 @@ env/
 
 # Configuration file with secret API keys
 config.ini
+config_demo.ini
 
 # IDE files
 .vscode/

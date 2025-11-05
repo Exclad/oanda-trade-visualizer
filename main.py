@@ -1,20 +1,21 @@
 # --- Imports ---
-import configparser                  # For reading the configuration file (API keys)
+import configparser                    # For reading the configuration file (API keys)
 from datetime import datetime, timedelta, timezone # For handling dates and times
-from zoneinfo import ZoneInfo        # For more robust timezone handling (like 'Asia/Singapore')
+from zoneinfo import ZoneInfo          # For more robust timezone handling (like 'Asia/Singapore')
 
 # Third-party libraries
-import requests                      # For making HTTP requests to Oanda
-import pandas as pd                  # For data manipulation and analysis (DataFrames)
-import plotly.express as px          # For creating interactive charts
-import plotly.io as pio              
-import streamlit as st               # For creating the web application interface
-import investpy                      # For fetching economic calendar data
-import pytz                          # For the list of all timezones
-import os                            # Provides functions to interact with the OS (e.g., os.path.exists)
-import time                          # Provides time-related functions (e.g., time.sleep)
+import requests                        # For making HTTP requests to Oanda
+import pandas as pd                    # For data manipulation and analysis (DataFrames)
+import plotly.express as px            # For creating interactive charts
+import plotly.io as pio                # Plotly Input/Output, for saving/displaying charts
+import streamlit as st                 # For creating the web application interface
+import investpy                        # For fetching economic calendar data
+import pytz                            # For the list of all timezones
+import os                              # Provides functions to interact with the OS (e.g., os.path.exists)
+import time                            # Provides time-related functions (e.g., time.sleep)
 
 # --- Function to create the config file ---
+# Note: This function appears to be unused in the main app, but is kept.
 def create_config(account_id, access_token, environment):
     """
     Creates and saves the config.ini file with the user-provided credentials.
@@ -36,35 +37,229 @@ def create_config(account_id, access_token, environment):
 
 def get_config():
     """
-    Reads API credentials and settings from the 'config.ini' file.
+    Reads API credentials based on the active environment in session_state.
+    - 'live' state reads 'config.ini'
+    - 'demo' state reads 'config_demo.ini'
+    
     Raises FileNotFoundError if the file or the 'OANDA' section is missing.
     Raises ValueError if any required keys are missing.
     """
-    config_file = 'config.ini'
+    
+    # Get the active environment from session state. Default to 'live' if not set.
+    active_env = st.session_state.get('active_environment', 'live')
+
+    # Determine which config file to read
+    if active_env == 'demo':
+        config_file = 'config_demo.ini'
+    else:
+        config_file = 'config.ini'
+
     config = configparser.ConfigParser()
     
-    # Check 1: Does the file exist?
-    # Use the 'os' library to check the file path.
+    # Check 1: Does the selected file exist?
     if not os.path.exists(config_file):
-        # If not, stop and "raise" an error. This error will be "caught"
-        # by the 'try...except' block in our main() function.
-        raise FileNotFoundError(f"Config file '{config_file}' not found.")
+        raise FileNotFoundError(f"Config file '{config_file}' not found for {active_env} environment.")
 
-    # If the file exists, read its contents into the config parser
-    config.read(config_file)
+    config.read(config_file) # Load the config file
 
     # Check 2: Does the 'OANDA' section exist?
     if 'OANDA' not in config:
-        # If the section is missing, we also raise an error to trigger the setup.
         raise FileNotFoundError(f"Config file '{config_file}' is missing the '[OANDA]' section.")
 
-    # Check 3: Are all required keys present within the [OANDA] section?
+    # Check 3: Are keys present? (Good practice)
     if 'ACCOUNT_ID' not in config['OANDA'] or 'ACCESS_TOKEN' not in config['OANDA'] or 'ENVIRONMENT' not in config['OANDA']:
-         # If not, raise a ValueError, which will also be caught by our 'try...except' block.
-         raise ValueError(f"Config file '{config_file}' is missing a required key (ACCOUNT_ID, ACCESS_TOKEN, or ENVIRONMENT).")
-
+         raise ValueError(f"Config file '{config_file}' is missing a required key.")
+    
     # Return the 'OANDA' section containing credentials
     return config['OANDA']
+
+def save_config(env_type, account_id, access_token):
+    """
+    Saves the provided credentials to the correct file ('config.ini' or 'config_demo.ini').
+    """
+    # Determine the correct filename and Oanda environment string ('practice' or 'live')
+    if env_type == 'demo':
+        config_file = 'config_demo.ini'
+        environment_value = 'practice' # Oanda API refers to demo as 'practice'
+    else:
+        config_file = 'config.ini'
+        environment_value = 'live'
+
+    config = configparser.ConfigParser()
+    # Create the [OANDA] section in the config object
+    config['OANDA'] = {
+        'ACCOUNT_ID': account_id,
+        'ACCESS_TOKEN': access_token,
+        'ENVIRONMENT': environment_value
+    }
+    
+    # Write the config object to the determined file
+    with open(config_file, 'w') as configfile:
+        config.write(configfile)
+
+def get_specific_config(env_type):
+    """
+    Tries to read a specific config file ('live' or 'demo')
+    and returns its contents or None if it doesn't exist or is invalid.
+    Used by the setup page to check file status.
+    """
+    if env_type == 'demo':
+        config_file = 'config_demo.ini'
+    else:
+        config_file = 'config.ini'
+
+    # If the file doesn't exist, return None
+    if not os.path.exists(config_file):
+        return None
+
+    config = configparser.ConfigParser()
+    config.read(config_file)
+
+    # If file is missing the [OANDA] section, return None
+    if 'OANDA' not in config:
+        return None
+        
+    # If file is missing required keys, return None
+    if 'ACCOUNT_ID' not in config['OANDA'] or 'ACCESS_TOKEN' not in config['OANDA']:
+         return None
+    
+    # Return the config as a dictionary
+    return dict(config['OANDA'])
+
+def show_setup_or_edit_page():
+    """
+    Displays a page with forms to edit the Demo and Live credentials.
+    This page is shown on first run (no configs) or when 'Edit Credentials' is clicked.
+    It uses session_state 'editing_demo' and 'editing_live' to control UI.
+    """
+    st.header("Setup / Edit Credentials")
+    st.info("Your credentials will be saved locally. You only need to fill in the account(s) you wish to use.")
+    
+    col1, col2 = st.columns(2)
+
+    # --- Read existing configs for pre-filling ---
+    # This checks if files exist to determine the UI state (show form vs. show buttons)
+    demo_config = get_specific_config('demo')
+    live_config = get_specific_config('live')
+    
+    # Check if we are currently in an "editing" state (set by the 'Edit' button)
+    is_editing_demo = st.session_state.get('editing_demo', False)
+    is_editing_live = st.session_state.get('editing_live', False)
+
+    # --- DEMO CONFIG (Column 1) ---
+    with col1:
+        st.subheader("Demo Account (`config_demo.ini`)")
+        
+        # SHOW FORM if (file doesn't exist) OR (we are in editing mode)
+        if not demo_config or is_editing_demo:
+            
+            # Pre-fill with existing data if we are editing
+            default_id = demo_config['account_id'] if demo_config and is_editing_demo else ""
+            default_token = demo_config['access_token'] if demo_config and is_editing_demo else ""
+
+            # Use a form to capture inputs
+            with st.form("demo_config_form"):
+                st.markdown("**Demo Account ID**")
+                account_id_demo = st.text_input("Demo Account ID", value=default_id, placeholder="xxx-xxx-xxxxxxx-xxx", label_visibility="collapsed")
+                
+                st.markdown("**Demo API Access Token**")
+                st.markdown("[Get API Token Here](https://hub.oanda.com/tpa/personal_token)")
+                access_token_demo = st.text_input("Demo API Token", value=default_token, type="password", placeholder="Paste demo token here", label_visibility="collapsed")
+
+                submitted_demo = st.form_submit_button("Save Demo Credentials")
+                
+                if submitted_demo:
+                    if not account_id_demo or not access_token_demo:
+                        st.error("Please fill in both fields for the Demo account.")
+                    else:
+                        # Save the credentials to config_demo.ini
+                        save_config('demo', account_id_demo, access_token_demo)
+                        st.session_state.editing_demo = False # Turn off editing mode
+                        st.success("Demo credentials saved!")
+                        time.sleep(1) # Brief pause to show message
+                        st.rerun() # Rerun the app to reflect changes
+        else:
+            # --- SHOW BUTTONS (File exists and we are NOT editing) ---
+            st.success("Demo credentials are saved.")
+            
+            # Use columns to put buttons side-by-side
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                # Button to go to the dashboard using this account
+                if st.button("Go to Demo Dashboard", use_container_width=True):
+                    st.session_state.active_environment = 'demo'
+                    st.session_state.show_edit_page = False # Hide the edit page
+                    st.session_state.editing_demo = False # Reset edit flags
+                    st.session_state.editing_live = False # Reset edit flags
+                    st.rerun() 
+            with btn_col2:
+                # Button to enable editing mode for Demo
+                if st.button("Edit Demo Credentials", use_container_width=True):
+                    st.session_state.editing_demo = True
+                    st.rerun()
+
+    # --- LIVE CONFIG (Column 2) ---
+    # This logic mirrors the Demo config section exactly
+    with col2:
+        st.subheader("Live Account (`config.ini`)")
+        
+        # SHOW FORM if (file doesn't exist) OR (we are in editing mode)
+        if not live_config or is_editing_live:
+
+            # Pre-fill with existing data if we are editing
+            default_id = live_config['account_id'] if live_config and is_editing_live else ""
+            default_token = live_config['access_token'] if live_config and is_editing_live else ""
+
+            with st.form("live_config_form"):
+                st.markdown("**Live Account ID**")
+                account_id_live = st.text_input("Live Account ID", value=default_id, placeholder="xxx-xxx-xxxxxxx-xxx", label_visibility="collapsed")
+                
+                st.markdown("**Live API Access Token**")
+                st.markdown("[Get API Token Here](https://hub.oanda.com/tpa/personal_token)")
+                access_token_live = st.text_input("Live API Token", value=default_token, type="password", placeholder="Paste live token here", label_visibility="collapsed")
+                
+                submitted_live = st.form_submit_button("Save Live Credentials")
+
+                if submitted_live:
+                    if not account_id_live or not access_token_live:
+                        st.error("Please fill in both fields for the Live account.")
+                    else:
+                        # Save the credentials to config.ini
+                        save_config('live', account_id_live, access_token_live)
+                        st.session_state.editing_live = False # Turn off editing mode
+                        st.success("Live credentials saved!")
+                        time.sleep(1)
+                        st.rerun()
+        else:
+            # --- SHOW BUTTONS (File exists and we are NOT editing) ---
+            st.success("Live credentials are saved.")
+            
+            # Use columns to put buttons side-by-side
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                # Button to go to the dashboard using this account
+                if st.button("Go to Live Dashboard", use_container_width=True):
+                    st.session_state.active_environment = 'live'
+                    st.session_state.show_edit_page = False # Hide the edit page
+                    st.session_state.editing_demo = False # Reset edit flags
+                    st.session_state.editing_live = False # Reset edit flags
+                    st.rerun()
+            with btn_col2:
+                # Button to enable editing mode for Live
+                if st.button("Edit Live Credentials", use_container_width=True):
+                    st.session_state.editing_live = True
+                    st.rerun()
+
+    st.markdown("---")
+    # Show "Back" button only if this isn't the forced initial setup
+    # (i.e., if at least one config file already exists)
+    if live_config or demo_config:
+        if st.button("Back to Dashboard"):
+            st.session_state.show_edit_page = False
+            # Reset editing states when going back
+            st.session_state.editing_demo = False
+            st.session_state.editing_live = False
+            st.rerun()
 
 # --- Data Fetching Functions ---
 
@@ -77,13 +272,14 @@ def get_account_summary(refresh_key):
     Used for displaying live balance, P/L, margin, and getting the last transaction ID.
     Cache depends on 'refresh_key'.
     """
-    print(f"RUNNING: get_account_summary() with key: {refresh_key}") # Debug print for terminal
+    # This print helps debug cache invalidation
+    print(f"RUNNING: get_account_summary() with key: {refresh_key}")
     try:
-        # Load API credentials from config file
+        # Load API credentials from the *active* config file
         config = get_config()
         account_id = config['ACCOUNT_ID']
         access_token = config['ACCESS_TOKEN']
-        environment = config['ENVIRONMENT']
+        environment = config['ENVIRONMENT'] # 'live' or 'practice'
 
         # Determine the correct API base URL (live or practice)
         base_url = "https://api-fxtrade.oanda.com" if environment == 'live' else "https://api-fxpractice.oanda.com"
@@ -219,7 +415,7 @@ def fetch_ff_events():
     """
     Fetches, parses, and standardizes economic events from 'investpy'.
     - Assumes incoming times from investpy are localized to 'Asia/Singapore'.
-    - Stores all times as timezone-aware UTC.
+    - Stores all times as timezone-aware UTC for consistent processing.
     - Sorts chronologically.
     """
     print("RUNNING: fetch_ff_events() [using investpy]")
@@ -228,7 +424,7 @@ def fetch_ff_events():
     
     # --- Timezone Assumption ---
     # We assume 'investpy' returns times already localized to the machine's timezone.
-    # Source Timezone kept as Singapore.
+    # We explicitly define this source timezone to be 'Asia/Singapore'.
     try:
         source_timezone = pytz.timezone('Asia/Singapore')
     except pytz.UnknownTimeZoneError:
@@ -251,6 +447,7 @@ def fetch_ff_events():
             # --- 1. Parse Time ---
             # This logic handles the inconsistent time formats from the library
             
+            # Handle 'All Day' events by setting them to the start of the day
             if event_time_str.lower() == "all day":
                 event_time_str = "00:00"
 
@@ -274,6 +471,7 @@ def fetch_ff_events():
                 continue
 
             # --- 2. Determine Status ---
+            # Compare the event's UTC time to the current UTC time
             now_utc = datetime.now(timezone.utc)
             event_status = "Passed" if event_time_utc < now_utc else "Upcoming"
 
@@ -357,7 +555,7 @@ def calculate_statistics(df, df_sorted_for_charts):
     stats['most_traded'] = df['Instrument'].mode()[0] if not df.empty else "N/A"
 
     # --- Ratios ---
-    gross_profit = wins_df['Profit/Loss'].sum()      # Sum of all positive P/L
+    gross_profit = wins_df['Profit/Loss'].sum()       # Sum of all positive P/L
     gross_loss = abs(losses_df['Profit/Loss'].sum())  # Sum of absolute values of negative P/L
 
     # Profit Factor (Gross Profit / Gross Loss)
@@ -389,14 +587,14 @@ def calculate_statistics(df, df_sorted_for_charts):
 
         # Calculate Max Drawdown Percentage relative to the peak it dropped from
         if not drawdown.empty and drawdown.max() > 0: # Check if drawdown exists
-              peak_at_max_drawdown = running_max[drawdown.idxmax()] # Find peak before max drop
-              if peak_at_max_drawdown > 0: # Avoid division by zero
-                  max_drawdown_percent = (max_drawdown_value / peak_at_max_drawdown) * 100
-              else:
-                  max_drawdown_percent = 0 # Define as 0% if drop happens from 0 or negative peak
+             peak_at_max_drawdown = running_max[drawdown.idxmax()] # Find peak before max drop
+             if peak_at_max_drawdown > 0: # Avoid division by zero
+                 max_drawdown_percent = (max_drawdown_value / peak_at_max_drawdown) * 100
+             else:
+                 max_drawdown_percent = 0 # Define as 0% if drop happens from 0 or negative peak
         else: # Handle case with no drawdown (e.g., only wins or no trades)
-              max_drawdown_value = 0
-              max_drawdown_percent = 0
+             max_drawdown_value = 0
+             max_drawdown_percent = 0
 
         stats['max_drawdown_value'] = max_drawdown_value
         stats['max_drawdown_percent'] = max_drawdown_percent
@@ -445,9 +643,8 @@ def main():
     st.title("My Oanda Trading Dashboard 📈")
 
     # --- Initialize Streamlit Session State ---
-    # Session state holds variables that persist between user interactions (reruns).
-    # This is crucial for keeping track of filters, toggle states, and dates.
-    # We must initialize them at the start to prevent 'KeyError' on first run.
+    # session_state is used to store variables that persist between reruns,
+    # such as filter values, UI states (e.g., 'editing_demo'), and cached data keys.
     if "refresh_key" not in st.session_state: 
         st.session_state.refresh_key = datetime.now()
     if "selected_instruments" not in st.session_state: 
@@ -456,62 +653,127 @@ def main():
         st.session_state.show_balance_markers = False
     if "show_pl_markers" not in st.session_state: 
         st.session_state.show_pl_markers = False
-    
-    # 'filter_' dates are what the app *actually* uses to filter the DataFrame
     if "filter_start_date" not in st.session_state: 
         st.session_state.filter_start_date = None
     if "filter_end_date" not in st.session_state: 
         st.session_state.filter_end_date = datetime.now().date()
-        
-    # 'custom_' dates just store the state of the 'Custom' date input widgets
     if "custom_start_date" not in st.session_state: 
         st.session_state.custom_start_date = None
     if "custom_end_date" not in st.session_state: 
         st.session_state.custom_end_date = datetime.now().date()
-        
-    # 'date_preset' stores the currently active radio button choice
     if "date_preset" not in st.session_state: 
         st.session_state.date_preset = "All Time"
+    if "show_edit_page" not in st.session_state:
+        st.session_state.show_edit_page = False
+    if "active_environment" not in st.session_state:
+        # Default to 'live' if config.ini exists, otherwise 'demo'
+        st.session_state.active_environment = 'live' if os.path.exists('config.ini') else 'demo'
+    if "editing_demo" not in st.session_state:
+        st.session_state.editing_demo = False
+    if "editing_live" not in st.session_state:
+        st.session_state.editing_live = False
+
+    # --- Check which config files exist ---
+    demo_exists = os.path.exists('config_demo.ini')
+    live_exists = os.path.exists('config.ini')
+
+    # --- Handle Initial Setup & Edit Page ---
+    # If no config files exist, force the setup page to show
+    if not demo_exists and not live_exists:
+        st.warning("Welcome! Please set up at least one account to use the dashboard.")
+        st.session_state.show_edit_page = True 
+    # If the 'show_edit_page' state is True (either from setup or 'Edit' button)
+    if st.session_state.show_edit_page:
+        show_setup_or_edit_page() # Display the setup/edit page
+        st.stop() # Do not run the rest of the dashboard
 
     # --- Sidebar Section: Data Control & Filters ---
     st.sidebar.header("Data Control")
-    # Refresh Button: Clears caches and resets session state to trigger full data reload
-    if st.sidebar.button("Refresh Live Data"):
-        st.cache_data.clear() # Clear function caches (@st.cache_data)
-        st.session_state.clear() # Clear all variables stored in session state
+
+    # --- Account Toggle (Demo/Live) ---
+    # Only show the toggle if *both* config files exist
+    if demo_exists and live_exists:
+        st.sidebar.subheader("Active Account")
+        # Set the radio button's default based on the active session state
+        default_index = 0 if st.session_state.active_environment == 'demo' else 1
         
-        # Re-initialize essential state variables after clearing
-        st.session_state.refresh_key = datetime.now()
+        def toggle_changed():
+            """
+            Callback function when the Demo/Live radio button is changed.
+            """
+            new_env = st.session_state.account_toggle
+            st.session_state.active_environment = "demo" if new_env == "Demo" else "live"
+            # Clear all caches and reset filters when switching accounts
+            st.cache_data.clear() 
+            st.session_state.selected_instruments = []
+            st.session_state.filter_start_date = None 
+            st.session_state.filter_end_date = datetime.now().date()
+            st.session_state.custom_start_date = None
+            st.session_state.custom_end_date = datetime.now().date()
+            st.session_state.date_preset = "All Time"
+        
+        st.sidebar.radio(
+            "Select Account",
+            ("Demo", "Live"),
+            index=default_index,
+            key="account_toggle",
+            on_change=toggle_changed,
+            horizontal=True
+        )
+    else:
+        # If only one file exists, set the active environment automatically
+        st.session_state.active_environment = 'demo' if demo_exists else 'live'
+    
+    # --- Edit Credentials Button ---
+    # This button sets the state to show the edit page and reruns
+    if st.sidebar.button("Edit Credentials", use_container_width=True):
+        st.session_state.show_edit_page = True
+        st.rerun()
+
+    st.sidebar.markdown("---")
+        
+    # Refresh Button
+    # This button clears all data caches and resets filters
+    if st.sidebar.button("Refresh Data", use_container_width=True):
+        st.cache_data.clear() # Clear all @st.cache_data functions
+        st.session_state.refresh_key = datetime.now() # Update the key to trigger re-fetch
+        # Reset all filters to their defaults
         st.session_state.selected_instruments = []
         st.session_state.show_balance_markers = False
         st.session_state.show_pl_markers = False
-        st.session_state.filter_start_date = None # Reset dates
+        st.session_state.filter_start_date = None
         st.session_state.filter_end_date = datetime.now().date()
         st.session_state.custom_start_date = None
         st.session_state.custom_end_date = datetime.now().date()
         st.session_state.date_preset = "All Time"
-        st.rerun() # Force Streamlit to rerun the script immediately
+        st.rerun() 
         
-    # Read the current refresh key (used to bust caches)
+    # Get the current refresh key from state (used by cached functions)
     refresh_key = st.session_state.refresh_key
 
-    try: # Main error handling block for the app
-        # --- Fetch Live Data (using cached functions) ---
-        config = get_config() # Get API config
-        summary_response = get_account_summary(refresh_key) # Fetch latest account summary
+    try: 
+        # --- Fetch Live Data ---
+        # Load the config for the *active* environment
+        config = get_config() 
+        # Fetch the latest account summary (cached)
+        summary_response = get_account_summary(refresh_key) 
+        # If fetching failed (e.g., API error), stop execution
         if summary_response is None:
-            st.stop() # Stop execution if summary fails (error already shown in function)
+            st.stop() 
 
+        # --- Display Account Header ---
         # Extract key summary details
         last_id = summary_response['account']['lastTransactionID']
+        env_label = st.session_state.active_environment.title()
+        st.header(f"Account Summary ({config['account_id']} - **{env_label}**)")
         account_balance = float(summary_response['account']['balance'])
         account_pl = float(summary_response['account']['pl']) # Unrealized P/L
         margin_avail = float(summary_response['account']['marginAvailable'])
 
-        # --- Display Account Header ---
-        st.header(f"Account Summary ({config['ACCOUNT_ID']})")
-        st.sidebar.info(f"Last Transaction ID: {last_id}") # Show last ID in sidebar
-        # Use columns for layout
+        # Display last transaction ID in the sidebar
+        st.sidebar.info(f"Last Transaction ID: {last_id}") 
+
+        # Display metrics in 3 columns
         col1, col2, col3 = st.columns(3)
         col1.metric("Balance (SGD)", f"${account_balance:,.2f}")
         col2.metric("Unrealized P/L (SGD)", f"${account_pl:,.2f}")
@@ -520,263 +782,234 @@ def main():
         # --- Economic Events Section ---
         st.markdown("---") 
         st.header("Today's Economic Events 📰") 
-
-        # --- 1. Timezone Selectbox ---
+        # Get all available timezones from pytz
         all_timezones = pytz.all_timezones
         try:
-            # Default to 'Asia/Singapore', find its index
+            # Try to default to 'Asia/Singapore'
             default_ix = all_timezones.index('Asia/Singapore')
         except ValueError:
-            default_ix = 0 # Fallback if 'Asia/Singapore' isn't found
-            
-        st.markdown("Select your timezone:")
-        # Create the dropdown, its value is stored in 'user_timezone'
+            default_ix = 0 # Default to the first timezone if not found
+        # Timezone selector for event display
         user_timezone = st.selectbox(
             label="Select your timezone:",
             options=all_timezones,
             index=default_ix,
-            label_visibility="collapsed" # Hides the label "Select your timezone:"
+            label_visibility="collapsed"
         )
         
-        # Helper for impact emojis
         def map_impact_to_emoji(impact):
+            """Helper function to assign an emoji to the event impact."""
             if impact == "High": return "🔴 High"
             if impact == "Medium": return "🟠 Medium"
             if impact == "Low": return "🟡 Low"
             return "⚪️ N/A"
-
-        # Styling function for 'Passed' events
+        
         def style_passed_events(row):
-            """Applies CSS to de-emphasize 'Passed' events."""
+            """
+            Helper function to style rows in the events DataFrame.
+            Grays out and strikes through events that have passed.
+            """
             if row.Status == 'Passed':
-                # CSS for grey text with a strikethrough
+                # Apply style to all columns in the row
                 return ['color: #888888; text-decoration: line-through;'] * len(row)
             else:
-                # No style for 'Upcoming' rows
-                return [''] * len(row)
-
-        # Fetch the event data
+                return [''] * len(row) # No style for upcoming events
+        
+        # Fetch event data (cached with TTL)
         events_df = fetch_ff_events()
-
-        # Only display the section if events were successfully fetched
+        
         if events_df is not None and not events_df.empty:
-            
-            # --- 2. Create filter widgets (Toggle and Currency Multiselect) ---
-            
-            # Get a sorted list of unique currencies from the data
+            # Get unique currencies for the filter
             all_currencies = sorted(events_df['Currency'].unique())
             
-            # Create two columns for the filters to sit side-by-side
+            # UI for event filters
             col1, col2 = st.columns(2)
-            
             with col1:
-                # The toggle goes in the first column
                 show_only_upcoming = st.toggle("Show only upcoming events", value=True)
-            
             with col2:
-                # The new currency multiselect goes in the second column
                 selected_currencies = st.multiselect(
                     "Filter by currency:",
                     options=all_currencies,
                     placeholder="Filter by currency (optional)",
-                    label_visibility="collapsed" # Hides the label
+                    label_visibility="collapsed"
                 )
-
-            # --- 3. Process and Filter the DataFrame ---
-            # Create a copy to avoid changing the cached data
+            
+            # Create a copy for display formatting
             df_events_display = events_df.copy()
-
-            # Convert Time to Selected Timezone
+            
+            # Convert the stored UTC time to the user's selected timezone
             try:
-                # Convert the 'Time' (which is UTC) to the user's selected timezone
                 df_events_display['Time'] = df_events_display['Time'].dt.tz_convert(user_timezone)
             except Exception as e:
                 st.error(f"Could not convert event time to {user_timezone}: {e}")
-                
-            # Format time as a string (e.g., "01/11 (Sat) 14:00")
-            df_events_display['Time'] = df_events_display['Time'].dt.strftime('%d/%m (%a) %H:%M')
-            # Apply emoji formatting to the 'Impact' column
-            df_events_display['Impact'] = df_events_display['Impact'].apply(map_impact_to_emoji)
             
-            # Select and reorder columns for a clean display
+            # Format time string and impact emoji for display
+            df_events_display['Time'] = df_events_display['Time'].dt.strftime('%d/%m (%a) %H:%M')
+            df_events_display['Impact'] = df_events_display['Impact'].apply(map_impact_to_emoji)
+            # Reorder columns for display
             df_events_display = df_events_display[['Time', 'Status', 'Currency', 'Impact', 'Event']] 
             
-            # --- 4. Apply Filters ---
-            
-            # Start with the full processed DataFrame
+            # Apply filters
             df_to_display = df_events_display
-            
-            # Apply toggle filter
             if show_only_upcoming:
                 df_to_display = df_to_display[df_to_display['Status'] == 'Upcoming'].copy()
-            
-            # Apply currency filter (if any are selected)
             if selected_currencies:
                 df_to_display = df_to_display[df_to_display['Currency'].isin(selected_currencies)]
             
-            # --- 5. Apply Styling and Display ---
-            # Apply the CSS styling function to the filtered DataFrame
+            # Apply the row styling (for passed events)
             styler = df_to_display.style.apply(style_passed_events, axis=1)
-
-            # Pass the STYLER object to st.dataframe to render it
+            # Display the final DataFrame
             st.dataframe(styler, width='stretch', hide_index=True)
-
         else:
             st.info("No economic events found for today.")
         # --- [END Economic Events Section] ---
 
-        # Fetch trade history (will use cache unless refresh_key or last_id changed)
+        # Fetch trade history (cached)
         trade_df = fetch_trade_history(refresh_key, last_id)
 
         # --- Main Content Area (Only if trade data is available) ---
         if trade_df is not None and not trade_df.empty:
 
             # --- Sidebar Section: Filters ---
-            st.sidebar.header("Filters")
-            # Determine the absolute earliest date from trade history and today's date
-            min_hist_date = trade_df['Date'].min().date()
-            today = datetime.now().date()
+            
+            # Group all filters into an expander for a cleaner sidebar
+            with st.sidebar.expander("Trade & Date Filters", expanded=True):
 
-            # Initialize filter/custom start date on the very first run after fetching data
-            if st.session_state.filter_start_date is None:
-                st.session_state.filter_start_date = min_hist_date
-                st.session_state.custom_start_date = min_hist_date # Keep custom date synced initially
+                # Get the date range of the entire trade history
+                min_hist_date = trade_df['Date'].min().date()
+                today = datetime.now().date()
 
-            # --- Date Preset Radio Buttons ---
-            date_options = ["All Time", "Year-to-Date (YTD)", "This Month", "Last Month", "Last 7 Days", "Custom"]
-            # The 'key' and 'on_change' parameters link the widget to our session state
-            # and callback functions, enabling the complex filter logic.
-            st.sidebar.radio(
-                "Select Date Range",
-                options=date_options,
-                key="date_preset_radio", # Unique key to access this widget's value in state
-                index=date_options.index(st.session_state.date_preset), # Set displayed selection based on state
-                on_change=preset_changed_callback, # Function to call when selection changes
-                args=(min_hist_date, today) # Arguments to pass to the callback
-            )
+                # Initialize filter dates on first run
+                if st.session_state.filter_start_date is None:
+                    st.session_state.filter_start_date = min_hist_date
+                    st.session_state.custom_start_date = min_hist_date 
 
-            # --- Conditional Display: Preset Range Text or Custom Date Inputs ---
-            # Determine if the date input widgets should be editable
-            custom_disabled = st.session_state.date_preset != "Custom"
-
-            # If a preset is active, show the calculated date range as text
-            if st.session_state.date_preset != "Custom":
-                start_display, end_display = calculate_preset_dates(st.session_state.date_preset, min_hist_date, today)
-                st.sidebar.markdown(f"**Selected Range:**")
-                start_display_str = start_display.strftime('%d/%m/%Y')
-                end_display_str = end_display.strftime('%d/%m/%Y')
-                st.sidebar.markdown(f"{start_display_str} to {end_display_str}")
-                st.sidebar.markdown("---") # Separator
-            # If "Custom" is active, show the date input widgets
-            else:
-                st.sidebar.markdown("---") # Separator
-                st.sidebar.date_input(
-                    "Start Date",
-                    value=st.session_state.custom_start_date, # Display the stored custom start date
-                    min_value=min_hist_date, max_value=today,
-                    disabled=custom_disabled, 
-                    key="start_date_input", # Unique key for this widget
-                    on_change=custom_dates_changed_callback # Function to sync state if changed
+                # --- Date Preset ---
+                date_options = ["All Time", "Year-to-Date (YTD)", "This Month", "Last Month", "Last 7 Days", "Custom"]
+                
+                # Use a selectbox for date presets
+                st.selectbox(
+                    "Select Date Range",
+                    options=date_options,
+                    key="date_preset_radio", # Key links this to the session state
+                    index=date_options.index(st.session_state.date_preset), 
+                    on_change=preset_changed_callback, # Callback to update dates
+                    args=(min_hist_date, today) # Pass arguments to the callback
                 )
-                st.sidebar.date_input(
-                    "End Date",
-                    value=st.session_state.custom_end_date, # Display the stored custom end date
-                    min_value=min_hist_date, max_value=today,
-                    disabled=custom_disabled, 
-                    key="end_date_input", # Unique key
-                    on_change=custom_dates_changed_callback # Function to sync state if changed
+
+                # --- Conditional Date Display ---
+                # Disable custom date pickers unless "Custom" is selected
+                custom_disabled = st.session_state.date_preset != "Custom"
+
+                if st.session_state.date_preset != "Custom":
+                    # If not 'Custom', show the calculated range as text
+                    start_display, end_display = calculate_preset_dates(st.session_state.date_preset, min_hist_date, today)
+                    st.markdown(f"**Selected Range:**")
+                    start_display_str = start_display.strftime('%d/%m/%Y')
+                    end_display_str = end_display.strftime('%d/%m/%Y')
+                    st.markdown(f"{start_display_str} to {end_display_str}")
+                else:
+                    # If 'Custom', show the date input widgets
+                    st.date_input(
+                        "Start Date",
+                        value=st.session_state.custom_start_date,
+                        min_value=min_hist_date, max_value=today,
+                        disabled=custom_disabled, 
+                        key="start_date_input", 
+                        on_change=custom_dates_changed_callback
+                    )
+                    st.date_input(
+                        "End Date",
+                        value=st.session_state.custom_end_date,
+                        min_value=min_hist_date, max_value=today,
+                        disabled=custom_disabled, 
+                        key="end_date_input",
+                        on_change=custom_dates_changed_callback
+                    )
+                
+                st.markdown("---") # Separator inside the expander
+
+                # --- Instrument Filter ---
+                # Get all unique instruments from the *entire* history
+                all_instruments = sorted(trade_df['Instrument'].unique())
+                st.multiselect(
+                    "Select Instruments (optional)",
+                    options=all_instruments,
+                    key="instrument_multiselect", 
+                    default=st.session_state.selected_instruments,
+                    on_change=sync_instruments_callback # Callback to update state
                 )
-                st.sidebar.markdown("---") # Separator
-
-
-            # --- Instrument Filter ---
-            all_instruments = sorted(trade_df['Instrument'].unique())
-            st.sidebar.multiselect(
-                "Select Instruments (optional)",
-                options=all_instruments,
-                key="instrument_multiselect", # Unique key
-                default=st.session_state.selected_instruments, # Display current selection from state
-                on_change=sync_instruments_callback # Function to update state if changed
-            )
+            
+            # --- End of Filter Expander ---
 
 
             # --- Apply Filters to Data ---
-            # This is the master filter for all charts and tables.
-            # We use the session state dates, which are controlled by the sidebar widgets.
-            
-            # 1. Localize the naive start/end dates from session state to UTC
-            #    (since the trade_df['Date'] column is already in UTC)
+            # Convert filter dates to UTC-aware datetimes for comparison
+            # (since the DataFrame 'Date' column is in UTC)
             start_datetime_utc = pd.to_datetime(st.session_state.filter_start_date).tz_localize('UTC')
-            # Add 1 day to end date and use '<' to include all times on the selected end day.
-            # This ensures we get all trades on the selected end_date.
+            # Add one day to the end date to make the range inclusive
             end_datetime_utc = pd.to_datetime(st.session_state.filter_end_date + timedelta(days=1)).tz_localize('UTC')
-
-            # 2. Filter the main DataFrame based on UTC dates
+            
+            # Apply date filter
             df_filtered_utc = trade_df[(trade_df['Date'] >= start_datetime_utc) & (trade_df['Date'] < end_datetime_utc)]
             
-            # 3. Apply instrument filter if any instruments are selected in state
+            # Apply instrument filter if any are selected
             if st.session_state.selected_instruments:
                 df_filtered_utc = df_filtered_utc[df_filtered_utc['Instrument'].isin(st.session_state.selected_instruments)].copy()
             else:
-                df_filtered_utc = df_filtered_utc.copy() # Ensure it's a copy
+                df_filtered_utc = df_filtered_utc.copy()
 
 
             # --- Process and Display Filtered Results ---
             if df_filtered_utc.empty:
-                # Show message if no trades match the current filters
                 st.warning("No trade data found matching your filters.")
             else:
                 # --- Convert Timezone for Display (for trade history) ---
-                # Create a copy for display purposes and convert 'Date' column to local time (SGT)
-                # This df_filtered is used for all *display* charts and tables.
+                # We keep the UTC dataframe for calculations but convert this
+                # one for display in the table.
                 try:
                     df_filtered = df_filtered_utc.copy()
+                    # Convert to 'Asia/Singapore' for display
                     df_filtered['Date'] = df_filtered['Date'].dt.tz_convert('Asia/Singapore')
                 except Exception as tz_error:
-                    # Fallback to UTC if timezone conversion fails
                     st.error(f"Error converting timezone: {tz_error}")
-                    df_filtered = df_filtered_utc
+                    df_filtered = df_filtered_utc # Fallback to UTC
 
                 # --- Calculate Statistics & Prepare Chart Data ---
                 
-                # Create a sorted version (by original UTC time) for time-series charts (Balance, Cum P/L)
-                # This is crucial for calculating cumulative P/L and drawdown correctly.
+                # Create a chronologically sorted DF for cumulative charts
                 df_filtered_sorted_for_charts = df_filtered_utc.sort_values(by='Date', ascending=True).copy()
                 # Calculate Cumulative P/L on the sorted data
                 df_filtered_sorted_for_charts['Cumulative P/L'] = df_filtered_sorted_for_charts['Profit/Loss'].cumsum()
                 
-                # Calculate all statistics (including drawdown using the sorted df)
+                # Calculate all key performance indicators
                 stats = calculate_statistics(df_filtered, df_filtered_sorted_for_charts)
-
-                # --- Prepare data for aggregation charts (using local time df) ---
-                # These columns are temporary helpers for grouping data for the charts.
+                
+                # Prepare data for Bar Charts (using the display-timezone DF)
                 df_filtered['Year'] = df_filtered['Date'].dt.year.astype(str)
                 pl_by_year = df_filtered.groupby('Year')['Profit/Loss'].sum().reset_index()
                 
                 df_filtered['YearMonth'] = df_filtered['Date'].dt.strftime('%Y-%m')
                 pl_by_month = df_filtered.groupby('YearMonth')['Profit/Loss'].sum().reset_index()
                 
-                # This 'Day' column is what we will add to the table below
                 df_filtered['Day'] = df_filtered['Date'].dt.day_name()
                 day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
                 pl_by_day = df_filtered.groupby('Day')['Profit/Loss'].sum().reindex(day_order).reset_index()
-
-                # Prepare data for instrument charts
+                
                 pl_by_instrument = df_filtered.groupby('Instrument')['Profit/Loss'].sum().reset_index()
                 count_by_instrument = df_filtered['Instrument'].value_counts().reset_index()
                 count_by_instrument.columns = ['Instrument', 'Count']
 
                 # --- Display Primary Statistics with Tooltips ---
-                # Determine if any filters are active to adjust the title
+                # Check if any filters are active
                 is_filtered = (st.session_state.filter_start_date != min_hist_date) or \
                                   (st.session_state.filter_end_date != today) or \
                                   bool(st.session_state.selected_instruments)
                 stats_title = "Overall Statistics (Filtered)" if is_filtered else "Overall Statistics"
                 st.header(stats_title)
-
-                # Use a 3x3 grid layout for the metrics
+                
+                # Display key stats in 3 rows of 3 columns
                 cols_row1 = st.columns(3); cols_row2 = st.columns(3); cols_row3 = st.columns(3)
-                # Add help text to each metric for explanation
                 cols_row1[0].metric("Total P/L (SGD)", f"${stats['total_pl']:,.2f}", help="Sum of Profit/Loss for all closed trades in the selected period.")
                 cols_row1[1].metric("Total Closed Trades", stats['total_trades'], help="Total number of closed trades with realized Profit/Loss.")
                 cols_row1[2].metric("Win Rate", f"{stats['win_rate']:.2f}%", help="Percentage of trades that were profitable (P/L > 0).")
@@ -787,274 +1020,184 @@ def main():
                 cols_row3[1].metric("Largest Win (SGD)", f"${stats['largest_win']:,.2f}", help="The single largest profit made on a closed trade.")
                 cols_row3[2].metric("Largest Loss (SGD)", f"${stats['largest_loss']:,.2f}", help="The single largest loss taken on a closed trade.")
 
-
                 # --- Charts Section ---
-                st.header("Visualizations"); st.markdown("---") # Main section header
-
+                st.header("Visualizations"); st.markdown("---")
+                
                 # --- Account Balance Chart ---
                 st.subheader("Account Balance Trend (After Trade)")
                 st.session_state.show_balance_markers = st.toggle("Show Markers", value=st.session_state.show_balance_markers, key="balance_markers_toggle")
+                # Filter out trades where balance data was not available (NA)
                 balance_data_df = df_filtered_sorted_for_charts.dropna(subset=['Account Balance'])
+                
                 if not balance_data_df.empty:
+                    # Calculate axis ranges with padding
                     min_bal = balance_data_df['Account Balance'].min(); max_bal = balance_data_df['Account Balance'].max(); padding_y = (max_bal - min_bal) * 0.1; yaxis_range_bal = [min_bal - padding_y, max_bal + padding_y]
                     min_date_bal = balance_data_df['Date'].min(); max_date_bal = balance_data_df['Date'].max(); padding_x = timedelta(days=5); xaxis_range_bal = [min_date_bal - padding_x, max_date_bal + padding_x]
+                    # Create line chart
                     fig_balance = px.line(balance_data_df, x='Date', y='Account Balance', title="Account Balance After Each Closed Trade", labels={'Account Balance': 'Account Balance (SGD)'}, markers=st.session_state.show_balance_markers)
                     fig_balance.update_traces(hovertemplate='Date: %{x}<br>Balance: $%{y:,.2f}')
                     fig_balance.update_layout(hovermode="x unified", yaxis_range=yaxis_range_bal, xaxis_range=xaxis_range_bal)
-                    st.plotly_chart(fig_balance, use_container_width=True) # Use full width
+                    st.plotly_chart(fig_balance, use_container_width=True)
                 else:
                     st.info("Account balance data not available in transaction history for this period.")
-                st.markdown("---") # Separator
-
-
+                
                 # --- Cumulative P/L Chart ---
+                st.markdown("---") 
                 st.subheader("Cumulative P/L Trend")
                 st.session_state.show_pl_markers = st.toggle("Show Markers", value=st.session_state.show_pl_markers, key="pl_markers_toggle")
+                # Calculate axis ranges with padding
                 pl_data = df_filtered_sorted_for_charts['Cumulative P/L']; min_pl = pl_data.min(); max_pl = pl_data.max(); padding_y = max(abs(max_pl - min_pl) * 0.1, 1); yaxis_range_pl = [min_pl - padding_y, max_pl + padding_y]
                 min_date_pl = df_filtered_sorted_for_charts['Date'].min(); max_date_pl = df_filtered_sorted_for_charts['Date'].max(); padding_x = timedelta(days=5); xaxis_range_pl = [min_date_pl - padding_x, max_date_pl + padding_x]
+                # Create line chart
                 fig_line = px.line(df_filtered_sorted_for_charts, x='Date', y='Cumulative P/L', labels={'Cumulative P/L': 'Cumulative P/L (SGD)'}, markers=st.session_state.show_pl_markers)
                 fig_line.update_traces(hovertemplate='Date: %{x}<br>Cumulative P/L: $%{y:,.2f}')
                 fig_line.update_layout(hovermode="x unified", yaxis_range=yaxis_range_pl, xaxis_range=xaxis_range_pl)
-                st.plotly_chart(fig_line, use_container_width=True) # Use full width
-                st.markdown("---") # Separator
-
-
-                # --- Performance Distribution Section ---
+                st.plotly_chart(fig_line, use_container_width=True)
+                
+                # --- Distribution Charts ---
+                st.markdown("---")
                 st.subheader("Performance Distribution")
                 col1, col2 = st.columns(2)
                 with col1:
+                    # Pie chart for Win/Loss count
                     pie_data = pd.DataFrame({'Metric': ['Wins', 'Losses'], 'Count': [stats['win_count'], stats['loss_count']]})
                     fig_pie = px.pie(pie_data, values='Count', names='Metric', title="Win/Loss Distribution", color='Metric', color_discrete_map={'Wins': 'green', 'Losses': 'red'})
                     fig_pie.update_traces(textinfo='percent+label+value') 
                     st.plotly_chart(fig_pie, use_container_width=True)
                 with col2:
+                    # Histogram for P/L value distribution
                     fig_hist = px.histogram(df_filtered, x="Profit/Loss", nbins=30, title="Distribution of Trade P/L", text_auto=True) 
                     fig_hist.update_traces(marker_line_color='black', marker_line_width=1, hovertemplate='P/L Range: %{x}<br>Count: %{y}') 
                     st.plotly_chart(fig_hist, use_container_width=True)
-                st.markdown("---") # Separator
-
-
-                # --- Instrument Analysis Section ---
+                
+                # --- Instrument Charts ---
+                st.markdown("---")
                 st.subheader("Instrument Analysis")
                 col1, col2 = st.columns(2) 
                 with col1:
-                      # This bar chart shows total P/L, colored by profit (green) or loss (red)
-                      fig_inst_pl = px.bar(pl_by_instrument.sort_values('Profit/Loss', ascending=False), 
-                                           x='Instrument', y='Profit/Loss', color='Profit/Loss', 
-                                           color_continuous_scale=px.colors.diverging.RdYlGn, 
-                                           title="Total P/L by Instrument")
-                      fig_inst_pl.update_traces(hovertemplate='Instrument: %{x}<br>Total P/L: $%{y:,.2f}')
-                      st.plotly_chart(fig_inst_pl, use_container_width=True)
+                        # Bar chart for P/L by Instrument
+                        fig_inst_pl = px.bar(pl_by_instrument.sort_values('Profit/Loss', ascending=False), 
+                                             x='Instrument', y='Profit/Loss', color='Profit/Loss', 
+                                             color_continuous_scale=px.colors.diverging.RdYlGn, # Red-Yellow-Green scale
+                                             title="Total P/L by Instrument")
+                        fig_inst_pl.update_traces(hovertemplate='Instrument: %{x}<br>Total P/L: $%{y:,.2f}')
+                        st.plotly_chart(fig_inst_pl, use_container_width=True)
                 with col2:
-                      # This bar chart shows the simple count of trades per instrument
-                      fig_inst_count = px.bar(count_by_instrument.sort_values('Count', ascending=False), 
-                                              x='Instrument', y='Count', title="Trade Count by Instrument")
-                      fig_inst_count.update_traces(hovertemplate='Instrument: %{x}<br>Count: %{y}')
-                      st.plotly_chart(fig_inst_count, use_container_width=True)
-                st.markdown("---") # Separator
-
-
-                # --- Performance Over Time Section ---
+                        # Bar chart for Trade Count by Instrument
+                        fig_inst_count = px.bar(count_by_instrument.sort_values('Count', ascending=False), 
+                                                x='Instrument', y='Count', title="Trade Count by Instrument")
+                        fig_inst_count.update_traces(hovertemplate='Instrument: %{x}<br>Count: %{y}')
+                        st.plotly_chart(fig_inst_count, use_container_width=True)
+                
+                # --- Time-based Charts ---
+                st.markdown("---")
                 st.subheader("Performance Over Time")
-
-                # Yearly P/L Bar Chart
+                # Bar chart for P/L by Year
                 fig_yearly_pl = px.bar(pl_by_year, x='Year', y='Profit/Loss', title="Total P/L by Year", 
                                        color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn)
                 fig_yearly_pl.update_traces(hovertemplate='Year: %{x}<br>Total P/L: $%{y:,.2f}')
                 st.plotly_chart(fig_yearly_pl, use_container_width=True)
-
-                # Monthly P/L Bar Chart
+                # Bar chart for P/L by Month
                 fig_monthly_pl = px.bar(pl_by_month, x='YearMonth', y='Profit/Loss', title="Total P/L by Month", 
                                         color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, 
                                         labels={'YearMonth': 'Month'})
                 fig_monthly_pl.update_traces(hovertemplate='Month: %{x}<br>Total P/L: $%{y:,.2f}')
                 st.plotly_chart(fig_monthly_pl, use_container_width=True)
-
-                # Day of Week P/L Bar Chart
+                # Bar chart for P/L by Day of Week
                 st.subheader("Performance by Day of Week", help="This chart shows the total Profit/Loss realized on each day of the week, based on the closing time of the trade in your local timezone (SGT).")
                 fig_day_pl = px.bar(pl_by_day, x='Day', y='Profit/Loss', title="Total P/L by Day", 
                                     color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, 
                                     labels={'Day': 'Day'})
                 fig_day_pl.update_traces(hovertemplate='Day: %{x}<br>Total P/L: $%{y:,.2f}')
                 st.plotly_chart(fig_day_pl, use_container_width=True)
-                
-                st.markdown("---") # Separator
-
+                st.markdown("---")
 
                 # --- Filtered Trade History Table & Download ---
                 st.header("Filtered Trade History")
-                
-                # Define the exact columns we want to show in the final table
-                columns_to_show = [
-                    "Date", "Day", "Instrument", "Buy/Sell", 
-                    "Amount", "Profit/Loss", "Account Balance"
-                ]
-                
-                # Filter df_filtered to only these columns for display and CSV
-                # This ensures temporary columns (Year, YearMonth) are not shown
+                # Define columns to show in the table
+                columns_to_show = ["Date", "Day", "Instrument", "Buy/Sell", "Amount", "Profit/Loss", "Account Balance"]
+                # Ensure all columns exist in the dataframe (e.g. 'Account Balance' might be all NA)
                 available_columns = [col for col in columns_to_show if col in df_filtered.columns]
                 
-                # Create a specific DataFrame for the CSV download
-                # We use df_filtered (which has SGT datetimes) for the CSV
+                # Prepare CSV for download
                 df_csv = df_filtered[available_columns].copy()
                 csv_string = df_csv.to_csv(index=False).encode('utf-8')
                 
-                # Create a separate DataFrame for display (with formatted dates)
+                # Prepare DataFrame for display (format date string)
                 df_display = df_filtered[available_columns].copy()
-                
-                # Format the 'Date' column *for display only*
                 df_display['Date'] = df_display['Date'].dt.strftime('%d/%m/%Y %H:%M:%S %Z')
                 
-                # Display the DataFrame with formatting for P/L and Balance columns
+                # Display table with number formatting
                 st.dataframe(df_display.style.format({"Profit/Loss": "{:.2f}", "Account Balance": "{:.2f}"}), width='stretch')
-
-                # Add the download button (using the df_csv data)
+                
+                # Download Button
                 st.download_button(
                     label="📥 Download Filtered Data as CSV",
                     data=csv_string,
-                    # Create a dynamic file name based on the filter dates
                     file_name=f"oanda_trades_{st.session_state.filter_start_date}_to_{st.session_state.filter_end_date}.csv",
-                    mime='text/csv', # Set the file type
+                    mime='text/csv',
                 )
 
         # --- Handle Case: No Trade Data Found ---
         else:
+            # This shows if the API fetch worked but returned no trades
             st.warning("No completed trades with P/L found in your account history.")
 
     # --- Error Handling ---
-    # This 'try' block attempts to run the main dashboard logic.
-    # If get_config() fails, it raises FileNotFoundError or ValueError.
-    # The 'except' block below will "catch" those specific errors.
     except (FileNotFoundError, ValueError) as e:
-        # This code block only runs if the 'try' block fails with one of the specified errors.
-        
-        # Display the error that was raised (e.g., "Config file 'config.ini' not found.")
-        st.warning(f"Configuration Error: {e}")
-        # Show a friendly welcome message for the setup process
-        st.header("Welcome! Please set up your Oanda Credentials")
-        st.info("Your credentials will be saved locally to 'config.ini' for future use.")
-        
-        # Create a Streamlit Form. This groups all the inputs together.
-        # The code inside the 'if submitted:' block will only run when the button is pressed.
-        with st.form("config_form"):
-            st.write("Enter your Oanda v20 API details below:")
-            
-            # --- 1. ACCOUNT ID INPUT ---
-            # Use st.markdown for a bold, custom label
-            st.markdown("**Oanda Account ID**")
-            # Use st.write for standard-sized help text
-            st.write("This is your account number, e.g., `xxx-xxx-xxxxxxx-xxx`")
-            account_id = st.text_input(
-                "Oanda Account ID",            # Internal label (for accessibility)
-                label_visibility="collapsed",  # Hide the internal label
-                placeholder="xxx-xxx-xxxxxxx-xxx"
-            )
-
-            # --- 2. API TOKEN INPUT ---
-            # Use st.markdown for a bold, custom label
-            st.markdown("**Oanda API Access Token**")
-            # Provide a clickable link to help the user
-            st.markdown("You can generate your token here: [Oanda Personal Token Hub](https://hub.oanda.com/tpa/personal_token)")
-            access_token = st.text_input(
-                "Oanda API Access Token",      # Internal label (for accessibility)
-                type="password",               # Hides the input as the user types
-                label_visibility="collapsed",  # Hide the internal label
-                placeholder="Paste your API token here"
-            )
-
-            # --- 3. ENVIRONMENT SELECTION ---
-            # Use st.radio for a simple, non-breakable choice
-            env_choice = st.radio(
-                "Select Environment",
-                ("Demo (Practice)", "Live"),  # User-friendly labels
-                index=0,                      # Default to "Demo"
-                horizontal=True,              # Display buttons side-by-side
-                help="Select 'Demo' for your practice account or 'Live' for your real trading account."
-            )
-            
-            # The one and only button for the form
-            submitted = st.form_submit_button("Save and Run Dashboard")
-        
-        # This 'if' block is OUTSIDE the form, but tied to the 'submitted' variable.
-        # It runs only after the user clicks the "Save" button.
-        if submitted:
-            # Simple validation to make sure fields are not blank
-            if not account_id or not access_token:
-                st.error("Please fill in both Account ID and Access Token.")
-            else:
-                # Convert the user-friendly radio option ("Demo (Practice)")
-                # into the system value ("practice") that the API expects.
-                environment = 'practice' if env_choice == 'Demo (Practice)' else 'live'
-                
-                # Call our helper function to write the data to 'config.ini'
-                create_config(account_id, access_token, environment) 
-                
-                # Show a temporary success message
-                st.success("Configuration saved! Reloading dashboard...")
-                # Pause for 2 seconds so the user can read the message
-                time.sleep(2) 
-                # Rerun the entire script from the top.
-                # This time, get_config() will succeed, and the dashboard will load.
-                st.rerun() 
+        # This catches if the *active* config file is deleted or invalid
+        st.error(f"Error loading config for {st.session_state.active_environment} account: {e}")
+        st.info("Click 'Edit Credentials' in the sidebar to fix or create the configuration.")
+        st.stop()
     
-    # This is the final 'catch-all' exception handler
     except Exception as e:
-        # This catches any OTHER error that might happen during the dashboard's runtime
-        # (e.g., Oanda's API is down, a bad API key was saved, a bug in a chart).
+        # Catch-all for any other unexpected errors during execution
         st.error(f"An unexpected error occurred: {e}")
-        # st.exception(e) prints the full error traceback for debugging.
-        st.exception(e)
+        st.exception(e) # Print the full traceback
 
 
 # --- Callback functions (Defined outside main() for clarity and scope) ---
-# Callbacks are functions that run when a widget's state changes (e.g., button click)
-# They are essential for linking widgets together and updating session state.
 
 def preset_changed_callback(min_hist_date, today):
     """
-    Called when the 'Select Date Range' radio button is changed.
-    Updates the filter dates and custom dates in session_state.
+    Callback triggered when the Date Range selectbox (e.g., "YTD", "Custom") changes.
+    It updates the session_state filter dates based on the new preset.
     """
-    # Get the new value selected by the user from session_state
     preset = st.session_state.date_preset_radio 
-    st.session_state.date_preset = preset # Update the main preset state variable
-
-    # If a non-custom preset was selected, calculate the corresponding dates
+    st.session_state.date_preset = preset 
+    
     if preset != "Custom":
+        # Calculate the dates for the chosen preset
         start_dt, end_dt = calculate_preset_dates(preset, min_hist_date, today)
-        # Update the state variables that store the *active filter dates*
+        # Update the main filter dates
         st.session_state.filter_start_date = start_dt
         st.session_state.filter_end_date = end_dt
-        # Also update the custom dates to match, so "Custom" starts from the preset range
+        # Also update the 'custom' dates so they match if the user switches back
         st.session_state.custom_start_date = start_dt
         st.session_state.custom_end_date = end_dt
     else:
-        # If the user explicitly selected "Custom", set the active filter dates
-        # to whatever is stored in the custom date state variables.
+        # If "Custom" is selected, use the dates stored in the 'custom' state
         st.session_state.filter_start_date = st.session_state.custom_start_date
         st.session_state.filter_end_date = st.session_state.custom_end_date
 
 def custom_dates_changed_callback():
     """
-    Called when the 'Start Date' or 'End Date' input widget changes.
-    Syncs the custom dates back to the main filter dates.
+    Callback triggered when the 'Start Date' or 'End Date' date_input widgets change.
+    It updates the session_state filter dates and sets the preset to "Custom".
     """
-    # Update the custom date state variables from the input widget keys
+    # Sync the main filter dates with the custom input widgets
     st.session_state.custom_start_date = st.session_state.start_date_input
     st.session_state.custom_end_date = st.session_state.end_date_input
-    # Immediately sync the active filter dates to match the new custom dates
     st.session_state.filter_start_date = st.session_state.custom_start_date
     st.session_state.filter_end_date = st.session_state.custom_end_date
-    # Ensure the preset state reflects "Custom" if it wasn't already
+    # Force the preset to "Custom"
     st.session_state.date_preset = "Custom"
-
 
 def sync_instruments_callback():
     """
-    Called when the 'Select Instruments' multiselect widget changes.
-    Updates the list of selected instruments in session_state.
+    Callback triggered when the instrument multiselect widget changes.
+    It updates the session_state list of selected instruments.
     """
-    # Update the selected instruments state variable from the multiselect widget key
     st.session_state.selected_instruments = st.session_state.instrument_multiselect
 
 # --- Run the main function when the script is executed ---
