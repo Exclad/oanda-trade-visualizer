@@ -186,7 +186,7 @@ def show_setup_or_edit_page():
             btn_col1, btn_col2 = st.columns(2)
             with btn_col1:
                 # Button to go to the dashboard using this account
-                if st.button("Go to Demo Dashboard", use_container_width=True):
+                if st.button("Go to Demo Dashboard", width='stretch'):
                     st.session_state.active_environment = 'demo'
                     st.session_state.show_edit_page = False # Hide the edit page
                     st.session_state.editing_demo = False # Reset edit flags
@@ -194,7 +194,7 @@ def show_setup_or_edit_page():
                     st.rerun() 
             with btn_col2:
                 # Button to enable editing mode for Demo
-                if st.button("Edit Demo Credentials", use_container_width=True):
+                if st.button("Edit Demo Credentials", width='stretch'):
                     st.session_state.editing_demo = True
                     st.rerun()
 
@@ -238,7 +238,7 @@ def show_setup_or_edit_page():
             btn_col1, btn_col2 = st.columns(2)
             with btn_col1:
                 # Button to go to the dashboard using this account
-                if st.button("Go to Live Dashboard", use_container_width=True):
+                if st.button("Go to Live Dashboard", width='stretch'):
                     st.session_state.active_environment = 'live'
                     st.session_state.show_edit_page = False # Hide the edit page
                     st.session_state.editing_demo = False # Reset edit flags
@@ -246,7 +246,7 @@ def show_setup_or_edit_page():
                     st.rerun()
             with btn_col2:
                 # Button to enable editing mode for Live
-                if st.button("Edit Live Credentials", use_container_width=True):
+                if st.button("Edit Live Credentials", width='stretch'):
                     st.session_state.editing_live = True
                     st.rerun()
 
@@ -726,7 +726,7 @@ def main():
     
     # --- Edit Credentials Button ---
     # This button sets the state to show the edit page and reruns
-    if st.sidebar.button("Edit Credentials", use_container_width=True):
+    if st.sidebar.button("Edit Credentials", width='stretch'):
         st.session_state.show_edit_page = True
         st.rerun()
 
@@ -734,7 +734,7 @@ def main():
         
     # Refresh Button
     # This button clears all data caches and resets filters
-    if st.sidebar.button("Refresh Data", use_container_width=True):
+    if st.sidebar.button("Refresh Data", width='stretch'):
         st.cache_data.clear() # Clear all @st.cache_data functions
         st.session_state.refresh_key = datetime.now() # Update the key to trigger re-fetch
         # Reset all filters to their defaults
@@ -1037,7 +1037,7 @@ def main():
                     fig_balance = px.line(balance_data_df, x='Date', y='Account Balance', title="Account Balance After Each Closed Trade", labels={'Account Balance': 'Account Balance (SGD)'}, markers=st.session_state.show_balance_markers)
                     fig_balance.update_traces(hovertemplate='Date: %{x}<br>Balance: $%{y:,.2f}')
                     fig_balance.update_layout(hovermode="x unified", yaxis_range=yaxis_range_bal, xaxis_range=xaxis_range_bal)
-                    st.plotly_chart(fig_balance, use_container_width=True)
+                    st.plotly_chart(fig_balance, width='stretch')
                 else:
                     st.info("Account balance data not available in transaction history for this period.")
                 
@@ -1052,7 +1052,7 @@ def main():
                 fig_line = px.line(df_filtered_sorted_for_charts, x='Date', y='Cumulative P/L', labels={'Cumulative P/L': 'Cumulative P/L (SGD)'}, markers=st.session_state.show_pl_markers)
                 fig_line.update_traces(hovertemplate='Date: %{x}<br>Cumulative P/L: $%{y:,.2f}')
                 fig_line.update_layout(hovermode="x unified", yaxis_range=yaxis_range_pl, xaxis_range=xaxis_range_pl)
-                st.plotly_chart(fig_line, use_container_width=True)
+                st.plotly_chart(fig_line, width='stretch')
                 
                 # --- Distribution Charts ---
                 st.markdown("---")
@@ -1063,12 +1063,12 @@ def main():
                     pie_data = pd.DataFrame({'Metric': ['Wins', 'Losses'], 'Count': [stats['win_count'], stats['loss_count']]})
                     fig_pie = px.pie(pie_data, values='Count', names='Metric', title="Win/Loss Distribution", color='Metric', color_discrete_map={'Wins': 'green', 'Losses': 'red'})
                     fig_pie.update_traces(textinfo='percent+label+value') 
-                    st.plotly_chart(fig_pie, use_container_width=True)
+                    st.plotly_chart(fig_pie, width='stretch')
                 with col2:
                     # Histogram for P/L value distribution
                     fig_hist = px.histogram(df_filtered, x="Profit/Loss", nbins=30, title="Distribution of Trade P/L", text_auto=True) 
                     fig_hist.update_traces(marker_line_color='black', marker_line_width=1, hovertemplate='P/L Range: %{x}<br>Count: %{y}') 
-                    st.plotly_chart(fig_hist, use_container_width=True)
+                    st.plotly_chart(fig_hist, width='stretch')
                 
                 # --- Instrument Charts ---
                 st.markdown("---")
@@ -1081,13 +1081,13 @@ def main():
                                              color_continuous_scale=px.colors.diverging.RdYlGn, # Red-Yellow-Green scale
                                              title="Total P/L by Instrument")
                         fig_inst_pl.update_traces(hovertemplate='Instrument: %{x}<br>Total P/L: $%{y:,.2f}')
-                        st.plotly_chart(fig_inst_pl, use_container_width=True)
+                        st.plotly_chart(fig_inst_pl, width='stretch')
                 with col2:
                         # Bar chart for Trade Count by Instrument
                         fig_inst_count = px.bar(count_by_instrument.sort_values('Count', ascending=False), 
                                                 x='Instrument', y='Count', title="Trade Count by Instrument")
                         fig_inst_count.update_traces(hovertemplate='Instrument: %{x}<br>Count: %{y}')
-                        st.plotly_chart(fig_inst_count, use_container_width=True)
+                        st.plotly_chart(fig_inst_count, width='stretch')
                 
                 # --- Time-based Charts ---
                 st.markdown("---")
@@ -1096,20 +1096,20 @@ def main():
                 fig_yearly_pl = px.bar(pl_by_year, x='Year', y='Profit/Loss', title="Total P/L by Year", 
                                        color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn)
                 fig_yearly_pl.update_traces(hovertemplate='Year: %{x}<br>Total P/L: $%{y:,.2f}')
-                st.plotly_chart(fig_yearly_pl, use_container_width=True)
+                st.plotly_chart(fig_yearly_pl, width='stretch')
                 # Bar chart for P/L by Month
                 fig_monthly_pl = px.bar(pl_by_month, x='YearMonth', y='Profit/Loss', title="Total P/L by Month", 
                                         color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, 
                                         labels={'YearMonth': 'Month'})
                 fig_monthly_pl.update_traces(hovertemplate='Month: %{x}<br>Total P/L: $%{y:,.2f}')
-                st.plotly_chart(fig_monthly_pl, use_container_width=True)
+                st.plotly_chart(fig_monthly_pl, width='stretch')
                 # Bar chart for P/L by Day of Week
                 st.subheader("Performance by Day of Week", help="This chart shows the total Profit/Loss realized on each day of the week, based on the closing time of the trade in your local timezone (SGT).")
                 fig_day_pl = px.bar(pl_by_day, x='Day', y='Profit/Loss', title="Total P/L by Day", 
                                     color='Profit/Loss', color_continuous_scale=px.colors.diverging.RdYlGn, 
                                     labels={'Day': 'Day'})
                 fig_day_pl.update_traces(hovertemplate='Day: %{x}<br>Total P/L: $%{y:,.2f}')
-                st.plotly_chart(fig_day_pl, use_container_width=True)
+                st.plotly_chart(fig_day_pl, width='stretch')
                 st.markdown("---")
 
                 # --- Filtered Trade History Table & Download ---
