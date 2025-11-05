@@ -1,6 +1,6 @@
-oandapyV20
-pandas
-matplotlib
 requests
-streamlit
+pandas
 plotly
+streamlit
+investpy
+pytz
