@@ -20,19 +20,23 @@ This guide will walk you through setting up the dashboard from scratch.
         * `Add python.exe to PATH`
     * Then click `Install Now`.
     * ![Python Setup Screen](images/python-setup-screen.png)
+  
+3.  **Disable Path Length Limit:**
+    * Once it's done, click the "Disable Path Length Limit".
+    * ![Python Disable Path Length Limit](images/python-disable-path-length-limit.png)
 
-3.  **Finish Installation:**
+4.  **Finish Installation:**
     * When setup is successful, you can click `Close`.
     * ![Python Setup Successful](images/python-setup-successful.png)
 
-4.  **Download the Code:**
+5.  **Download the Code:**
     * Go to the [GitHub repository](https://github.com/Exclad/oanda-trade-visualizer).
     * Click the green `<> Code` button and select `Download ZIP`.
 
-5.  **Extract Files:**
+6.  **Extract Files:**
     * Find the downloaded `.zip` file and extract it to a folder where you want to keep the dashboard (e.g., your Desktop or Documents).
 
-6.  **Run the Dashboard:**
+7.  **Run the Dashboard:**
     * Open the extracted folder (e.g., `oanda-trade-visualizer-main`).
     * Double-click the **`run_dashboard_windows.bat`** file.
     * Windows may show a security warning. If it does, click "More info" and then "Run anyway".
