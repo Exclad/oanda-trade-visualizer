@@ -9,7 +9,7 @@ import pandas as pd                    # For data manipulation and analysis (Dat
 import plotly.express as px            # For creating interactive charts
 import plotly.io as pio                # Plotly Input/Output, for saving/displaying charts
 import streamlit as st                 # For creating the web application interface
-import investpy                        # For fetching economic calendar data
+# import investpy                    # REMOVED: Broken library causing crashes
 import pytz                            # For the list of all timezones
 import os                              # Provides functions to interact with the OS (e.g., os.path.exists)
 import time                            # Provides time-related functions (e.g., time.sleep)
@@ -409,115 +409,14 @@ def fetch_trade_history(refresh_key, last_transaction_id):
     return df
 
 # Use caching with a Time-To-Live (TTL) of 900 seconds (15 minutes).
-# This means the app will only re-fetch events if the last fetch was > 15 mins ago.
 @st.cache_data(ttl=900)
 def fetch_ff_events():
     """
-    Fetches, parses, and standardizes economic events from 'investpy'.
-    - Assumes incoming times from investpy are localized to 'Asia/Singapore'.
-    - Stores all times as timezone-aware UTC for consistent processing.
-    - Sorts chronologically.
+    MODIFIED: This function used to use 'investpy' to fetch economic events.
+    Since 'investpy' is deprecated/broken, this now returns None to avoid crashing the app.
     """
-    print("RUNNING: fetch_ff_events() [using investpy]")
-    
-    event_list = []
-    
-    # --- Timezone Assumption ---
-    # We assume 'investpy' returns times already localized to the machine's timezone.
-    # We explicitly define this source timezone to be 'Asia/Singapore'.
-    try:
-        source_timezone = pytz.timezone('Asia/Singapore')
-    except pytz.UnknownTimeZoneError:
-        print("ERROR: 'Asia/Singapore' timezone not found. Defaulting to UTC.")
-        source_timezone = pytz.utc
-    
-    try:
-        # Fetch the calendar data from investpy
-        df_invest = investpy.economic_calendar() 
-        
-        if df_invest.empty:
-            print("DEBUG: investpy returned no events for today.")
-            return None
-
-        # Loop through each row (event) returned by the library
-        for index, row in df_invest.iterrows():
-            event_time_str = row['time']
-            event_date_str = row['date']
-            
-            # --- 1. Parse Time ---
-            # This logic handles the inconsistent time formats from the library
-            
-            # Handle 'All Day' events by setting them to the start of the day
-            if event_time_str.lower() == "all day":
-                event_time_str = "00:00"
-
-            try:
-                # 1. Create the full datetime string (e.g., "01/11/2025 08:00")
-                dt_str = f"{event_date_str} {event_time_str}"
-                
-                # 2. Create a "naive" datetime object (no timezone info)
-                naive_dt = datetime.strptime(dt_str, '%d/%m/%Y %H:%M')
-                
-                # 3. Localize this naive time, telling it "this time is in SGT"
-                local_dt = source_timezone.localize(naive_dt)
-                
-                # 4. Convert this SGT-aware time to standard UTC for storage.
-                #    This allows us to convert it to *any* user-selected timezone later.
-                event_time_utc = local_dt.astimezone(pytz.utc)
-                
-            except Exception as e:
-                # Skip if time is malformed (e.g., "Tentative")
-                print(f"Skipping event with unparsed time/date: {row['event']} ({e})")
-                continue
-
-            # --- 2. Determine Status ---
-            # Compare the event's UTC time to the current UTC time
-            now_utc = datetime.now(timezone.utc)
-            event_status = "Passed" if event_time_utc < now_utc else "Upcoming"
-
-            # --- 3. Parse Impact ---
-            # Standardize the string (e.g., "medium" -> "Medium")
-            impact_str = str(row.get('importance', 'N/A')).title() 
-            # Map the string to our standard categories
-            impact_map = {"High": "High", "Medium": "Medium", "Low": "Low"}
-            impact = impact_map.get(impact_str, "N/A")
-
-            # --- 4. Get Currency ---
-            # Safely handle 'None' values for currency
-            currency_val = row.get('currency') # This might be 'USD' or it might be None
-            if currency_val is None:
-                currency_code = "N/A"
-            else:
-                currency_code = currency_val.upper()
-
-            # Add the processed event to our list
-            event_list.append({
-                "Time": event_time_utc,         # Standardized UTC datetime object
-                "Status": event_status,         # "Upcoming" or "Passed"
-                "Event": row.get('event', 'N/A'),
-                "Currency": currency_code,
-                "Impact": impact,
-            })
-
-        if not event_list:
-            print("DEBUG: Data was processed, but event_list is still empty.")
-            return None 
-
-        # Convert the list to a DataFrame
-        df = pd.DataFrame(event_list)
-        
-        # Sort by Time (chronologically)
-        df = df.sort_values(by="Time", ascending=True)
-        
-        return df
-
-    except Exception as e:
-        # Catch-all for errors during the fetch or processing
-        st.error(f"An unexpected error occurred in fetch_ff_events: {e}")
-        print(f"ERROR: Unexpected exception: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+    print("DEBUG: fetch_ff_events called (Function disabled due to deprecated library).")
+    return None
 
 # --- Data Processing Function ---
 def calculate_statistics(df, df_sorted_for_charts):
@@ -782,87 +681,16 @@ def main():
         # --- Economic Events Section ---
         st.markdown("---") 
         # Wrap the entire section in an expander, set to collapsed by default
-        with st.expander("Today's Economic Events 📰", expanded=True):
-            # Get all available timezones from pytz
-            all_timezones = pytz.all_timezones
-            try:
-                # Try to default to 'Asia/Singapore'
-                default_ix = all_timezones.index('Asia/Singapore')
-            except ValueError:
-                default_ix = 0 # Default to the first timezone if not found
-            # Timezone selector for event display
-            user_timezone = st.selectbox(
-                label="Select your timezone:",
-                options=all_timezones,
-                index=default_ix,
-                label_visibility="collapsed"
-            )
-            
-            def map_impact_to_emoji(impact):
-                """Helper function to assign an emoji to the event impact."""
-                if impact == "High": return "🔴 High"
-                if impact == "Medium": return "🟠 Medium"
-                if impact == "Low": return "🟡 Low"
-                return "⚪️ N/A"
-            
-            def style_passed_events(row):
-                """
-                Helper function to style rows in the events DataFrame.
-                Grays out and strikes through events that have passed.
-                """
-                if row.Status == 'Passed':
-                    # Apply style to all columns in the row
-                    return ['color: #888888; text-decoration: line-through;'] * len(row)
-                else:
-                    return [''] * len(row) # No style for upcoming events
-            
-            # Fetch event data (cached with TTL)
+        with st.expander("Today's Economic Events 📰", expanded=False):
+            # Fetch event data (This is now stubbed to return None)
             events_df = fetch_ff_events()
             
             if events_df is not None and not events_df.empty:
-                # Get unique currencies for the filter
+                # Get all unique currencies for the filter
                 all_currencies = sorted(events_df['Currency'].unique())
-                
-                # UI for event filters
-                col1, col2 = st.columns(2)
-                with col1:
-                    show_only_upcoming = st.toggle("Show only upcoming events", value=True)
-                with col2:
-                    selected_currencies = st.multiselect(
-                        "Filter by currency:",
-                        options=all_currencies,
-                        placeholder="Filter by currency (optional)",
-                        label_visibility="collapsed"
-                    )
-                
-                # Create a copy for display formatting
-                df_events_display = events_df.copy()
-                
-                # Convert the stored UTC time to the user's selected timezone
-                try:
-                    df_events_display['Time'] = df_events_display['Time'].dt.tz_convert(user_timezone)
-                except Exception as e:
-                    st.error(f"Could not convert event time to {user_timezone}: {e}")
-                
-                # Format time string and impact emoji for display
-                df_events_display['Time'] = df_events_display['Time'].dt.strftime('%d/%m (%a) %H:%M')
-                df_events_display['Impact'] = df_events_display['Impact'].apply(map_impact_to_emoji)
-                # Reorder columns for display
-                df_events_display = df_events_display[['Time', 'Status', 'Currency', 'Impact', 'Event']] 
-                
-                # Apply filters
-                df_to_display = df_events_display
-                if show_only_upcoming:
-                    df_to_display = df_to_display[df_to_display['Status'] == 'Upcoming'].copy()
-                if selected_currencies:
-                    df_to_display = df_to_display[df_to_display['Currency'].isin(selected_currencies)]
-                
-                # Apply the row styling (for passed events)
-                styler = df_to_display.style.apply(style_passed_events, axis=1)
-                # Display the final DataFrame
-                st.dataframe(styler, width='stretch', hide_index=True)
+                # ... (Rest of event display logic) ...
             else:
-                st.info("No economic events found for today.")
+                st.info("Economic calendar data is currently unavailable.")
         # --- [END Economic Events Section] ---
 
         # Fetch trade history (cached)
